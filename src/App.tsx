@@ -555,6 +555,10 @@ export default function App() {
     event.target.value = "";
   }
 
+  function handleAnimationStateChange(event: ChangeEvent<HTMLSelectElement>) {
+    setAnimationState(normalizePetAnimationState(event.target.value));
+  }
+
   const petPayload = useMemo(() => {
     if (loadedPet) {
       return {
@@ -911,6 +915,18 @@ export default function App() {
           </label>
           <div className="state-control">
             <span>State</span>
+            <select
+              className="state-select"
+              aria-label="State"
+              value={animationState}
+              onChange={handleAnimationStateChange}
+            >
+              {petAnimationOptions.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
             <div className="state-options">
               {petAnimationOptions.map((option) => (
                 <button
@@ -951,6 +967,18 @@ export default function App() {
           </label>
           <div className="state-control compact">
             <span>State</span>
+            <select
+              className="state-select"
+              aria-label="State"
+              value={animationState}
+              onChange={handleAnimationStateChange}
+            >
+              {petAnimationOptions.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
             <div className="state-options">
               {petAnimationOptions.map((option) => (
                 <button

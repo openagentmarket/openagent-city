@@ -147,7 +147,8 @@ textarea {
 }
 
 .identity-card input,
-.identity-card textarea {
+.identity-card textarea,
+.state-select {
   width: 100%;
   border: 1px solid rgba(255, 248, 238, 0.28);
   border-radius: 8px;
@@ -162,8 +163,19 @@ textarea {
 }
 
 .identity-card input:focus,
-.identity-card textarea:focus {
+.identity-card textarea:focus,
+.state-select:focus {
   border-color: #ffd66b;
+}
+
+.state-select {
+  display: none;
+  min-height: 38px;
+  font-weight: 900;
+}
+
+.state-select option {
+  color: #191714;
 }
 
 .state-options {
@@ -385,7 +397,8 @@ textarea {
   grid-template-columns: repeat(4, minmax(0, 1fr));
 }
 
-.room-panel input {
+.room-panel input,
+.room-panel .state-select {
   width: 100%;
   border: 1px solid rgba(255, 248, 238, 0.28);
   border-radius: 8px;
@@ -396,7 +409,8 @@ textarea {
   text-transform: none;
 }
 
-.room-panel input:focus {
+.room-panel input:focus,
+.room-panel .state-select:focus {
   border-color: #ffd66b;
 }
 
@@ -510,5 +524,13 @@ textarea {
 
   .pet-state-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .state-select {
+    display: block;
+  }
+
+  .state-options {
+    display: none;
   }
 }
