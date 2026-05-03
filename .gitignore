@@ -13,3 +13,4 @@ vite.config.d.ts
 .openagent/workspace.json
 AGENTS.md
 .openagent/share pets.md
+.openagent/openagent-city.canvas

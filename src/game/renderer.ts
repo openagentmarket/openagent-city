@@ -29,7 +29,7 @@ export function drawTextPill(
   text: string,
   x: number,
   y: number,
-  options: { font?: string; fill?: string; stroke?: string } = {},
+  options: { font?: string; fill?: string; stroke?: string; onlineDot?: boolean } = {},
 ) {
   context.save();
   context.font = options.font ?? "800 13px Avenir Next, sans-serif";
@@ -37,17 +37,28 @@ export function drawTextPill(
   context.textBaseline = "middle";
 
   const metrics = context.measureText(text);
-  const width = metrics.width + 18;
+  const dotSpace = options.onlineDot ? 14 : 0;
+  const width = metrics.width + 18 + dotSpace;
   const height = 27;
+  const left = x - width / 2;
 
   context.fillStyle = options.fill ?? "rgba(255, 248, 238, 0.96)";
-  roundedRect(context, x - width / 2, y - height / 2, width, height, 7);
+  roundedRect(context, left, y - height / 2, width, height, 7);
   context.fill();
   context.strokeStyle = options.stroke ?? "rgba(43, 33, 24, 0.72)";
   context.lineWidth = 2;
   context.stroke();
+  if (options.onlineDot) {
+    context.fillStyle = "#38d96f";
+    context.strokeStyle = "rgba(43, 33, 24, 0.52)";
+    context.lineWidth = 1.5;
+    context.beginPath();
+    context.arc(left + 13, y, 4.5, 0, Math.PI * 2);
+    context.fill();
+    context.stroke();
+  }
   context.fillStyle = "#2b2118";
-  context.fillText(text, x, y + 1);
+  context.fillText(text, x + dotSpace / 2, y + 1);
   context.restore();
 }
 
@@ -168,6 +179,7 @@ export function drawGuest(context: CanvasRenderingContext2D, guest: GuestPet, ti
 
 export function drawPlayer(context: CanvasRenderingContext2D, state: PlayerRenderState) {
   const { image, pet, position, frameIndex, flipX } = state;
+  const isOnline = pet.isOnline === true;
   const sourceFrameWidth = image.naturalWidth % 8 === 0 ? image.naturalWidth / 8 : pet.frameWidth;
   const sourceFrameHeight = image.naturalHeight % 9 === 0 ? image.naturalHeight / 9 : pet.frameHeight;
   const displayWidth = 96;
@@ -216,6 +228,7 @@ export function drawPlayer(context: CanvasRenderingContext2D, state: PlayerRende
   context.restore();
   drawTextPill(context, pet.name, position.x, position.y + 22, {
     font: "900 13px Avenir Next, sans-serif",
+    onlineDot: isOnline,
   });
 
   const status = pet.status?.trim() || (state.state === "idle" ? "idle" : "");

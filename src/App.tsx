@@ -2,7 +2,6 @@ import { ChangeEvent, useCallback, useEffect, useMemo, useRef, useState } from "
 import { onAuthStateChanged, signInAnonymously, User } from "firebase/auth";
 import {
   collection,
-  deleteDoc,
   doc,
   onSnapshot,
   query,
@@ -16,9 +15,12 @@ import {
   defaultPetAnimationState,
   normalizePetAnimationState,
   petAnimationOptions,
+  petSpritesheetRows,
   PetAnimationState,
+  PetSpritesheetState,
 } from "./petAnimation";
 import { getFilePath, PetJson, savePetDraft, SavedPet } from "./petStorage";
+import { loadCachedImage } from "./imageCache";
 
 type LoadedPet = {
   folderName: string;
@@ -45,6 +47,18 @@ type RoomParticipant = CanvasPetPayload & {
   description: string;
   updatedAt?: unknown;
 };
+
+const petStatePreviewOptions: { value: PetSpritesheetState; label: string }[] = [
+  { value: "idle", label: "Idle" },
+  { value: "running-right", label: "Run right" },
+  { value: "running-left", label: "Run left" },
+  { value: "waving", label: "Wave" },
+  { value: "jumping", label: "Jump" },
+  { value: "failed", label: "Failed" },
+  { value: "waiting", label: "Waiting" },
+  { value: "running", label: "Run" },
+  { value: "review", label: "Review" },
+];
 
 const onboardingStorageKey = "openagent-city:onboarding:v1";
 const defaultRoomId = "codex-city";
@@ -147,6 +161,184 @@ function timestampToMillis(value: unknown) {
   return 0;
 }
 
+function downloadNameForPet(pet: CanvasPetPayload) {
+  const safeName = pet.name
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+
+  return `${safeName || "pet"}-spritesheet.webp`;
+}
+
+function packageNameForPet(pet: CanvasPetPayload) {
+  return downloadNameForPet(pet).replace(/-spritesheet\.webp$/, "-pet.zip");
+}
+
+function petFolderName(pet: CanvasPetPayload) {
+  const safeName = pet.name
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+
+  return safeName || "pet";
+}
+
+function rootlessDownloadPath(file: File) {
+  const parts = getFilePath(file).split("/").filter(Boolean);
+  return parts.length > 1 ? parts.slice(1).join("/") : file.name;
+}
+
+function downloadUrlForPet(sourceUrl: string, fileName: string) {
+  try {
+    const url = new URL(sourceUrl, window.location.href);
+
+    if (url.protocol === "http:" || url.protocol === "https:") {
+      const safeFileName = fileName.replace(/["\\\r\n]/g, "_");
+      url.searchParams.set("response-content-disposition", `attachment; filename="${safeFileName}"`);
+    }
+
+    return url.toString();
+  } catch {
+    return sourceUrl;
+  }
+}
+
+function triggerDownload(href: string, fileName: string) {
+  const link = document.createElement("a");
+  link.href = href;
+  link.download = fileName;
+  link.rel = "noopener";
+  document.body.append(link);
+  link.click();
+  link.remove();
+}
+
+function downloadBlob(blob: Blob, fileName: string) {
+  const objectUrl = URL.createObjectURL(blob);
+  triggerDownload(objectUrl, fileName);
+  URL.revokeObjectURL(objectUrl);
+}
+
+function petJsonForDownload(pet: CanvasPetPayload, savedPet?: SavedPet): PetJson {
+  return {
+    id: savedPet?.petJson?.id ?? savedPet?.localPetId ?? petFolderName(pet),
+    displayName: savedPet?.petJson?.displayName ?? savedPet?.displayName ?? pet.name,
+    description: savedPet?.petJson?.description ?? savedPet?.description ?? pet.description,
+    spritesheetPath: savedPet?.petJson?.spritesheetPath ?? "spritesheet.webp",
+  };
+}
+
+async function buildLocalPetPackage(pet: CanvasPetPayload, loadedPet: LoadedPet) {
+  const { default: JSZip } = await import("jszip");
+  const zip = new JSZip();
+  const root = petFolderName(pet);
+
+  for (const file of loadedPet.files) {
+    zip.file(`${root}/${rootlessDownloadPath(file)}`, file);
+  }
+
+  return zip.generateAsync({ type: "blob" });
+}
+
+async function buildRemotePetPackage(pet: CanvasPetPayload, savedPet?: SavedPet) {
+  const { default: JSZip } = await import("jszip");
+  const zip = new JSZip();
+  const root = petFolderName(pet);
+  const petJson = petJsonForDownload(pet, savedPet);
+  const spritesheetPath = petJson.spritesheetPath ?? "spritesheet.webp";
+  const response = await fetch(pet.publicImageUrl || pet.imageUrl);
+
+  if (!response.ok) {
+    throw new Error(`Spritesheet download returned ${response.status}`);
+  }
+
+  zip.file(`${root}/pet.json`, `${JSON.stringify(petJson, null, 2)}\n`);
+  zip.file(`${root}/${spritesheetPath.replace(/^\.\//, "")}`, await response.blob());
+
+  return zip.generateAsync({ type: "blob" });
+}
+
+function PetStatePreview({
+  pet,
+  state,
+}: {
+  pet: CanvasPetPayload;
+  state: PetSpritesheetState;
+}) {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+
+    if (!canvas) {
+      return;
+    }
+
+    const context = canvas.getContext("2d");
+
+    if (!context) {
+      return;
+    }
+
+    let isCurrent = true;
+    let animationFrame = 0;
+
+    void loadCachedImage(pet.imageUrl).then((image) => {
+      const sourceFrameWidth = image.naturalWidth % 8 === 0 ? image.naturalWidth / 8 : pet.frameWidth;
+      const sourceFrameHeight =
+        image.naturalHeight % 9 === 0 ? image.naturalHeight / 9 : pet.frameHeight;
+      const rowDefinition = petSpritesheetRows[state] ?? petSpritesheetRows.idle;
+      const atlasRows = Math.floor(image.naturalHeight / sourceFrameHeight);
+      const row = atlasRows > rowDefinition.row ? rowDefinition.row : 0;
+      const dpr = Math.min(2, window.devicePixelRatio || 1);
+      const width = 148;
+      const height = 112;
+
+      canvas.width = Math.round(width * dpr);
+      canvas.height = Math.round(height * dpr);
+      canvas.style.width = `${width}px`;
+      canvas.style.height = `${height}px`;
+
+      const render = (time: number) => {
+        if (!isCurrent) {
+          return;
+        }
+
+        const frame = Math.floor(time / 170) % rowDefinition.frames;
+        const displayHeight = Math.min(94, sourceFrameHeight * (88 / sourceFrameWidth));
+        const displayWidth = (sourceFrameWidth / sourceFrameHeight) * displayHeight;
+
+        context.setTransform(dpr, 0, 0, dpr, 0, 0);
+        context.imageSmoothingEnabled = false;
+        context.clearRect(0, 0, width, height);
+        context.drawImage(
+          image,
+          frame * sourceFrameWidth,
+          row * sourceFrameHeight,
+          sourceFrameWidth,
+          sourceFrameHeight,
+          (width - displayWidth) / 2,
+          height - displayHeight - 8,
+          displayWidth,
+          displayHeight,
+        );
+        animationFrame = requestAnimationFrame(render);
+      };
+
+      animationFrame = requestAnimationFrame(render);
+    });
+
+    return () => {
+      isCurrent = false;
+      cancelAnimationFrame(animationFrame);
+    };
+  }, [pet.frameHeight, pet.frameWidth, pet.imageUrl, state]);
+
+  return <canvas ref={canvasRef} className="pet-state-canvas" aria-hidden="true" />;
+}
+
 export default function App() {
   const initialOnboarding = useMemo(() => readOnboardingState(), []);
   const [user, setUser] = useState<User | null>(null);
@@ -154,6 +346,7 @@ export default function App() {
   const [loadedPet, setLoadedPet] = useState<LoadedPet | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [saveStatus, setSaveStatus] = useState<SaveStatus>("signing-in");
+  const [presenceNow, setPresenceNow] = useState(() => Date.now());
   const [hasLoadedSavedPets, setHasLoadedSavedPets] = useState(false);
   const [identityName, setIdentityName] = useState(initialOnboarding.identityName);
   const [identityBio, setIdentityBio] = useState(initialOnboarding.identityBio);
@@ -165,6 +358,7 @@ export default function App() {
   const [isPetReady, setIsPetReady] = useState(false);
   const [isNewPetOnboarding, setIsNewPetOnboarding] = useState(false);
   const [roomPets, setRoomPets] = useState<RoomParticipant[]>([]);
+  const [selectedPet, setSelectedPet] = useState<CanvasPetPayload | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -373,6 +567,7 @@ export default function App() {
         petId: loadedPet.savedPet?.petId,
         description: identityBio,
         publicImageUrl: loadedPet.savedPet?.spritesheetUrl,
+        packageUrl: loadedPet.savedPet?.packageUrl,
       };
     }
 
@@ -387,6 +582,7 @@ export default function App() {
         petId: savedPets[0].petId,
         description: identityBio || savedPets[0].description || "",
         publicImageUrl: savedPets[0].spritesheetUrl,
+        packageUrl: savedPets[0].packageUrl,
       };
     }
 
@@ -434,7 +630,7 @@ export default function App() {
     const roomRef = doc(db, "rooms", defaultRoomId);
     const participantRef = doc(db, "rooms", defaultRoomId, "participants", user.uid);
 
-    const writePresence = () => {
+    const writePresence = (includeJoinedAt = false) => {
       const now = serverTimestamp();
 
       void setDoc(roomRef, {
@@ -450,7 +646,7 @@ export default function App() {
           setError(roomUpdateError);
         });
 
-      void setDoc(participantRef, {
+      const participantPayload = {
         ownerUid: user.uid,
         petId: petPayload.petId,
         displayName: petPayload.name,
@@ -458,11 +654,14 @@ export default function App() {
         status: petPayload.status ?? "",
         animationState: petPayload.animationState,
         spritesheetUrl: petPayload.publicImageUrl,
+        packageUrl: petPayload.packageUrl ?? "",
         frameWidth: petPayload.frameWidth,
         frameHeight: petPayload.frameHeight,
-        joinedAt: now,
         updatedAt: now,
-      })
+        ...(includeJoinedAt ? { joinedAt: now } : {}),
+      };
+
+      void setDoc(participantRef, participantPayload, { merge: true })
         .then(() => {
           setError((current) => (current === roomJoinError ? null : current));
         })
@@ -472,12 +671,11 @@ export default function App() {
         });
     };
 
-    writePresence();
-    const heartbeat = window.setInterval(writePresence, roomPresenceHeartbeatMs);
+    writePresence(true);
+    const heartbeat = window.setInterval(() => writePresence(), roomPresenceHeartbeatMs);
 
     return () => {
       window.clearInterval(heartbeat);
-      void deleteDoc(participantRef);
     };
   }, [hasEnteredCity, petPayload, user]);
 
@@ -490,11 +688,10 @@ export default function App() {
     const unsubscribe = onSnapshot(
       collection(db, "rooms", defaultRoomId, "participants"),
       (snapshot) => {
-        const activeAfter = Date.now() - roomPresenceTtlMs;
         setRoomPets(
           snapshot.docs
             .map((participantDoc) => {
-              const data = participantDoc.data();
+              const data = participantDoc.data({ serverTimestamps: "estimate" });
               return {
                 uid: participantDoc.id,
                 petId: String(data.petId ?? participantDoc.id),
@@ -503,12 +700,12 @@ export default function App() {
                 status: String(data.status ?? ""),
                 animationState: normalizePetAnimationState(data.animationState),
                 imageUrl: String(data.spritesheetUrl ?? ""),
+                packageUrl: String(data.packageUrl ?? ""),
                 frameWidth: Number(data.frameWidth ?? 128),
                 frameHeight: Number(data.frameHeight ?? 128),
                 updatedAt: data.updatedAt,
               };
-            })
-            .filter((roomPet) => timestampToMillis(roomPet.updatedAt) >= activeAfter),
+            }),
         );
       },
       () => {
@@ -517,6 +714,19 @@ export default function App() {
     );
 
     return unsubscribe;
+  }, [hasEnteredCity]);
+
+  useEffect(() => {
+    if (!hasEnteredCity) {
+      return;
+    }
+
+    setPresenceNow(Date.now());
+    const timer = window.setInterval(() => setPresenceNow(Date.now()), roomPresenceHeartbeatMs);
+
+    return () => {
+      window.clearInterval(timer);
+    };
   }, [hasEnteredCity]);
 
   const petAssetKey = petPayload?.imageUrl ?? "";
@@ -529,8 +739,57 @@ export default function App() {
     setIsPetReady(ready);
   }, []);
 
+  const handlePetClick = useCallback((clickedPet: CanvasPetPayload) => {
+    setSelectedPet(clickedPet);
+  }, []);
+
+  const handleDownloadPet = useCallback(async () => {
+    if (!selectedPet) {
+      return;
+    }
+
+    const savedPet = savedPets.find((pet) => pet.petId === selectedPet.petId);
+    const canUseLocalFiles =
+      !!loadedPet &&
+      (selectedPet.imageUrl === loadedPet.imageUrl ||
+        (!!selectedPet.petId && selectedPet.petId === loadedPet.savedPet?.petId));
+
+    try {
+      setError(null);
+
+      if (selectedPet.packageUrl && !canUseLocalFiles) {
+        triggerDownload(selectedPet.packageUrl, packageNameForPet(selectedPet));
+      } else {
+        const packageBlob = canUseLocalFiles
+          ? await buildLocalPetPackage(selectedPet, loadedPet)
+          : await buildRemotePetPackage(selectedPet, savedPet);
+
+        downloadBlob(packageBlob, packageNameForPet(selectedPet));
+      }
+    } catch (caughtError) {
+      console.warn("Pet package download fell back to spritesheet", caughtError);
+
+      const fileName = downloadNameForPet(selectedPet);
+      const sourceUrl = selectedPet.publicImageUrl || selectedPet.imageUrl;
+      triggerDownload(downloadUrlForPet(sourceUrl, fileName), fileName);
+    }
+  }, [loadedPet, savedPets, selectedPet]);
+
   const isRestoringPet = saveStatus === "signing-in" || (!!user && !hasLoadedSavedPets);
-  const otherRoomPets = roomPets.filter((roomPet) => roomPet.uid !== user?.uid && roomPet.imageUrl);
+  const activeAfter = presenceNow - roomPresenceTtlMs;
+  const visibleRoomPets = roomPets
+    .map((roomPet) => ({
+      ...roomPet,
+      isOnline: timestampToMillis(roomPet.updatedAt) >= activeAfter,
+    }))
+    .sort((a, b) => Number(b.isOnline) - Number(a.isOnline));
+  const otherRoomPets = visibleRoomPets.filter((roomPet) => roomPet.uid !== user?.uid && roomPet.imageUrl);
+  const residentCount = Math.max(roomPets.length, hasEnteredCity && petPayload ? 1 : 0);
+  const onlineCount = Math.max(
+    visibleRoomPets.filter((roomPet) => roomPet.isOnline).length,
+    hasEnteredCity && petPayload ? 1 : 0,
+  );
+  const canvasPet = petPayload && hasEnteredCity ? { ...petPayload, isOnline: true } : petPayload;
 
   const uploadLabel =
     saveStatus === "signing-in"
@@ -556,10 +815,41 @@ export default function App() {
         {...{ webkitdirectory: "", directory: "" }}
       />
       <CanvasRoom
-        pet={petPayload}
+        pet={canvasPet}
         otherPets={otherRoomPets}
         onPetReadyChange={handlePetReadyChange}
+        onPetClick={handlePetClick}
       />
+      {selectedPet ? (
+        <section className="pet-inspector" aria-label={`${selectedPet.name} states`}>
+          <div className="pet-inspector-header">
+            <div>
+              <p className="eyebrow">Pet states</p>
+              <h2>{selectedPet.name}</h2>
+              {selectedPet.description ? <p>{selectedPet.description}</p> : null}
+            </div>
+            <button
+              className="icon-action"
+              type="button"
+              aria-label="Close pet states"
+              onClick={() => setSelectedPet(null)}
+            >
+              x
+            </button>
+          </div>
+          <div className="pet-state-grid">
+            {petStatePreviewOptions.map((option) => (
+              <article key={option.value} className="pet-state-card">
+                <PetStatePreview pet={selectedPet} state={option.value} />
+                <strong>{option.label}</strong>
+              </article>
+            ))}
+          </div>
+          <button className="primary-action" type="button" onClick={handleDownloadPet}>
+            Download pet folder
+          </button>
+        </section>
+      ) : null}
       {isRestoringPet ? (
         <section className="onboarding-card loading-card">
           <p className="eyebrow">OpenAgent City</p>
@@ -647,7 +937,8 @@ export default function App() {
       ) : (
         <section className="room-panel">
           <p className="room-badge">
-            {defaultRoomName} · {roomPets.length || 1} pet{(roomPets.length || 1) === 1 ? "" : "s"}
+            {defaultRoomName} · {residentCount} resident{residentCount === 1 ? "" : "s"} ·{" "}
+            {onlineCount} online
           </p>
           <label>
             <span>Status</span>
@@ -682,6 +973,14 @@ export default function App() {
       >
         {uploadLabel}
       </button>
+      <a
+        className="github-link"
+        href="https://github.com/openagentmarket/openagent-city"
+        target="_blank"
+        rel="noreferrer"
+      >
+        GitHub
+      </a>
       {error ? <p className="floating-error">{error}</p> : null}
     </main>
   );

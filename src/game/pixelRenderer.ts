@@ -588,7 +588,7 @@ export function drawPixelLoading(
   context: CanvasRenderingContext2D,
   width: number,
   height: number,
-  label = "Loading pixel office assets",
+  label = "Loading",
 ) {
   context.fillStyle = "#d8c39f";
   context.fillRect(0, 0, width, height);

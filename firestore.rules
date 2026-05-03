@@ -27,6 +27,7 @@ service cloud.firestore {
         "status",
         "animationState",
         "spritesheetUrl",
+        "packageUrl",
         "frameWidth",
         "frameHeight",
         "joinedAt",
@@ -39,6 +40,7 @@ service cloud.firestore {
       && (!request.resource.data.keys().hasAny(["status"]) || request.resource.data.status is string)
       && (!request.resource.data.keys().hasAny(["animationState"]) || request.resource.data.animationState is string)
       && request.resource.data.spritesheetUrl is string
+      && (!request.resource.data.keys().hasAny(["packageUrl"]) || request.resource.data.packageUrl is string)
       && request.resource.data.frameWidth is number
       && request.resource.data.frameHeight is number;
     }
@@ -51,6 +53,7 @@ service cloud.firestore {
         "storagePath",
         "spritesheetPath",
         "petJsonPath",
+        "packagePath",
         "firstUploaderUid",
         "uploadCount",
         "createdAt",
@@ -62,6 +65,7 @@ service cloud.firestore {
       && request.resource.data.storagePath == ("assets/" + assetHash)
       && request.resource.data.spritesheetPath is string
       && (request.resource.data.petJsonPath == null || request.resource.data.petJsonPath is string)
+      && (request.resource.data.packagePath == null || request.resource.data.packagePath is string)
       && request.resource.data.firstUploaderUid is string
       && request.resource.data.uploadCount is number
       && request.resource.data.createdAt is timestamp

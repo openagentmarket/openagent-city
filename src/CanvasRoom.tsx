@@ -17,12 +17,14 @@ export type CanvasPetPayload = {
   imageUrl: string;
   name: string;
   status?: string;
+  isOnline?: boolean;
   animationState: PetAnimationState;
   frameWidth: number;
   frameHeight: number;
   petId?: string;
   description?: string;
   publicImageUrl?: string;
+  packageUrl?: string;
 };
 
 type PlayerState = "idle" | "walk";
@@ -123,11 +125,13 @@ export function CanvasRoom({
   otherPets = [],
   showDebug = false,
   onPetReadyChange,
+  onPetClick,
 }: {
   pet: CanvasPetPayload | null;
   otherPets?: CanvasPetPayload[];
   showDebug?: boolean;
   onPetReadyChange?: (isReady: boolean) => void;
+  onPetClick?: (pet: CanvasPetPayload) => void;
 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const assetsRef = useRef<PixelOfficeAssets | null>(null);
@@ -140,6 +144,7 @@ export function CanvasRoom({
   const flipRef = useRef(false);
   const playerStateRef = useRef<PlayerState>("idle");
   const viewportRef = useRef<Viewport>({ width: 672, height: 704, dpr: 1 });
+  const hitAreasRef = useRef<{ pet: CanvasPetPayload; x: number; y: number; width: number; height: number }[]>([]);
 
   useEffect(() => {
     let isCurrent = true;
@@ -325,6 +330,27 @@ export function CanvasRoom({
         })
         .filter((remotePlayer): remotePlayer is NonNullable<typeof remotePlayer> => Boolean(remotePlayer));
 
+      hitAreasRef.current = [...remotePlayers, ...(player ? [player] : [])].map((renderPet) => {
+        const sourceFrameWidth =
+          renderPet.image.naturalWidth % 8 === 0
+            ? renderPet.image.naturalWidth / 8
+            : renderPet.pet.frameWidth;
+        const sourceFrameHeight =
+          renderPet.image.naturalHeight % 9 === 0
+            ? renderPet.image.naturalHeight / 9
+            : renderPet.pet.frameHeight;
+        const width = 96;
+        const height = (sourceFrameHeight / sourceFrameWidth) * width;
+
+        return {
+          pet: renderPet.pet,
+          x: renderPet.position.x - width / 2,
+          y: renderPet.position.y - height,
+          width,
+          height,
+        };
+      });
+
       drawPixelOfficeEntities(context, assets, player, remotePlayers, pathRef.current, time, showDebug);
 
       if (!player) {
@@ -362,6 +388,20 @@ export function CanvasRoom({
       x: camera.x + event.clientX - bounds.left,
       y: camera.y + event.clientY - bounds.top,
     };
+    const clickedPet = [...hitAreasRef.current].reverse().find((area) => {
+      return (
+        targetIso.x >= area.x &&
+        targetIso.x <= area.x + area.width &&
+        targetIso.y >= area.y &&
+        targetIso.y <= area.y + area.height
+      );
+    });
+
+    if (clickedPet) {
+      onPetClick?.(clickedPet.pet);
+      return;
+    }
+
     const target = isoPointToLogicalPoint(assets, targetIso);
 
     pathRef.current = findPixelPath(assets, positionRef.current, target);

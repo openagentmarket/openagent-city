@@ -35,12 +35,14 @@ export type SavedPet = {
   publicStatus?: string;
   animationState?: PetAnimationState;
   spritesheetUrl: string;
+  packageUrl?: string;
   frameWidth: number;
   frameHeight: number;
   status: "draft" | "published" | "archived";
   visibility: "private" | "public";
   approvalState: "draft" | "pending" | "approved" | "rejected";
   latestVersion: number;
+  petJson?: PetJson;
   updatedAt?: unknown;
   createdAt?: unknown;
 };
@@ -151,6 +153,17 @@ function cacheControlForUpload(path: string, file: File, imageFile: File) {
   return shortCacheControl;
 }
 
+async function buildPetPackage(files: File[], packageRoot: string) {
+  const { default: JSZip } = await import("jszip");
+  const zip = new JSZip();
+
+  for (const file of files) {
+    zip.file(`${packageRoot}/${rootlessPath(file)}`, file);
+  }
+
+  return zip.generateAsync({ type: "blob" });
+}
+
 export async function savePetDraft({
   uid,
   files,
@@ -169,13 +182,14 @@ export async function savePetDraft({
   const duplicate = await getDocs(duplicateQuery);
   const duplicatePet = duplicate.docs.find((petDoc) => petDoc.data().assetHash === assetHash);
 
-  if (duplicatePet) {
+  if (duplicatePet?.data().packageUrl) {
     return duplicatePet.data() as SavedPet;
   }
 
   const uploadFiles = pickUploadFiles(files, imageFile);
   const uploadedPaths: Record<string, string> = {};
   let spritesheetUrl = "";
+  let packageUrl: string | undefined;
 
   for (const [path, file] of uploadFiles) {
     const storagePath = `assets/${assetHash}/${path}`;
@@ -201,6 +215,24 @@ export async function savePetDraft({
     spritesheetUrl = await getDownloadURL(fallbackRef);
   }
 
+  try {
+    const packageBlob = await buildPetPackage(files, slug);
+    const packagePath = `${slug}.zip`;
+    const packageRef = ref(storage, `assets/${assetHash}/${packagePath}`);
+    await uploadBytes(packageRef, packageBlob, {
+      cacheControl: immutableCacheControl,
+      contentType: "application/zip",
+      customMetadata: {
+        ownerUid: uid,
+        assetHash,
+      },
+    });
+    uploadedPaths[packagePath] = `assets/${assetHash}/${packagePath}`;
+    packageUrl = await getDownloadURL(packageRef);
+  } catch (caughtError) {
+    console.warn("Pet package upload failed", caughtError);
+  }
+
   const petRef = doc(db, "pets", petId);
   const existingPet = await getDoc(petRef);
   const latestVersion = existingPet.exists()
@@ -221,6 +253,7 @@ export async function savePetDraft({
     description: petJson.description?.trim() || undefined,
     publicStatus: "",
     spritesheetUrl,
+    packageUrl: packageUrl ?? (duplicatePet?.data().packageUrl as string | undefined),
     frameWidth,
     frameHeight,
     status: "draft",
@@ -243,6 +276,7 @@ export async function savePetDraft({
       spritesheetPath:
         uploadedPaths[storageSafePath(rootlessPath(imageFile))] ?? `assets/${assetHash}/${imageFile.name}`,
       petJsonPath: uploadedPaths["pet.json"] ?? null,
+      packagePath: uploadedPaths[`${slug}.zip`] ?? existingAsset.data()?.packagePath ?? null,
       firstUploaderUid: existingAsset.exists() ? existingAsset.data().firstUploaderUid : uid,
       uploadCount: existingAsset.exists() ? increment(1) : 1,
       updatedAt: now,

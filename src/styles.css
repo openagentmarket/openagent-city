@@ -56,7 +56,7 @@ textarea {
   display: block;
   width: 100vw;
   height: 100dvh;
-  cursor: crosshair;
+  cursor: pointer;
   image-rendering: pixelated;
 }
 
@@ -206,6 +206,100 @@ textarea {
   opacity: 0.72;
 }
 
+.pet-inspector {
+  position: fixed;
+  right: 18px;
+  top: 18px;
+  z-index: 6;
+  display: grid;
+  gap: 12px;
+  width: min(580px, calc(100vw - 36px));
+  max-height: calc(100dvh - 96px);
+  overflow: auto;
+  border: 2px solid rgba(255, 248, 238, 0.68);
+  border-radius: 8px;
+  background: rgba(18, 20, 18, 0.86);
+  color: #fff8ee;
+  padding: 14px;
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.38);
+  backdrop-filter: blur(16px);
+}
+
+.pet-inspector-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.pet-inspector h2,
+.pet-inspector p {
+  margin: 0;
+}
+
+.pet-inspector h2 {
+  font-size: 1.35rem;
+  line-height: 1.05;
+}
+
+.pet-inspector p:not(.eyebrow) {
+  margin-top: 6px;
+  color: rgba(255, 248, 238, 0.72);
+  font-size: 0.88rem;
+  line-height: 1.4;
+}
+
+.icon-action {
+  display: inline-grid;
+  place-items: center;
+  flex: 0 0 34px;
+  width: 34px;
+  height: 34px;
+  border: 1px solid rgba(255, 248, 238, 0.24);
+  border-radius: 8px;
+  background: rgba(255, 248, 238, 0.08);
+  color: #fff8ee;
+  font-size: 1rem;
+  font-weight: 950;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.pet-state-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.pet-state-card {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+  border: 1px solid rgba(255, 248, 238, 0.2);
+  border-radius: 8px;
+  background: rgba(255, 248, 238, 0.08);
+  padding: 8px;
+}
+
+.pet-state-canvas {
+  width: 100%;
+  max-width: 148px;
+  height: 112px;
+  justify-self: center;
+  image-rendering: pixelated;
+}
+
+.pet-state-card strong {
+  overflow: hidden;
+  color: rgba(255, 248, 238, 0.86);
+  font-size: 0.78rem;
+  font-weight: 950;
+  text-align: center;
+  text-overflow: ellipsis;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
 .room-picker {
   display: grid;
   gap: 8px;
@@ -305,7 +399,8 @@ textarea {
 }
 
 .floating-upload,
-.floating-error {
+.floating-error,
+.github-link {
   position: fixed;
   z-index: 5;
   border: 2px solid rgba(255, 248, 238, 0.68);
@@ -344,9 +439,35 @@ textarea {
   outline-offset: 4px;
 }
 
-.floating-error {
+.github-link {
   left: 18px;
   bottom: 18px;
+  display: inline-flex;
+  align-items: center;
+  min-height: 38px;
+  color: #fff8ee;
+  padding: 0 12px;
+  font-size: 0.82rem;
+  font-weight: 950;
+  text-decoration: none;
+  transition:
+    transform 180ms ease,
+    background 180ms ease;
+}
+
+.github-link:hover {
+  transform: translateY(-2px);
+  background: rgba(43, 33, 24, 0.9);
+}
+
+.github-link:focus-visible {
+  outline: 3px solid #e6a73d;
+  outline-offset: 4px;
+}
+
+.floating-error {
+  left: 18px;
+  bottom: 68px;
   max-width: min(420px, calc(100vw - 36px));
   margin: 0;
   padding: 12px 14px;
@@ -375,5 +496,17 @@ textarea {
     width: calc(100vw - 24px);
     max-height: calc(100dvh - 84px);
     overflow: auto;
+  }
+
+  .pet-inspector {
+    left: 12px;
+    right: 12px;
+    top: 12px;
+    width: auto;
+    max-height: calc(100dvh - 84px);
+  }
+
+  .pet-state-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
