@@ -1,4 +1,4 @@
-import { MouseEvent, useEffect, useRef } from "react";
+import { PointerEvent, useEffect, useRef } from "react";
 import { isoPointToLogicalPoint, isoWorldBounds, logicalPointToIsoPoint } from "./game/isometric";
 import { loadPixelOfficeAssets, PixelOfficeAssets } from "./game/pixelAssets";
 import { findPixelPath, pixelSpawn } from "./game/pixelPathfinding";
@@ -33,6 +33,20 @@ type Viewport = {
   height: number;
   dpr: number;
 };
+type PetHitArea = {
+  pet: CanvasPetPayload;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+};
+
+const petTapPadding = {
+  x: 18,
+  top: 16,
+  bottom: 36,
+};
+const minPetTapSize = 128;
 
 function moveAlongPath(position: Point, path: Point[], speed: number, delta: number) {
   let remaining = (speed * delta) / 1000;
@@ -144,7 +158,7 @@ export function CanvasRoom({
   const flipRef = useRef(false);
   const playerStateRef = useRef<PlayerState>("idle");
   const viewportRef = useRef<Viewport>({ width: 672, height: 704, dpr: 1 });
-  const hitAreasRef = useRef<{ pet: CanvasPetPayload; x: number; y: number; width: number; height: number }[]>([]);
+  const hitAreasRef = useRef<PetHitArea[]>([]);
 
   useEffect(() => {
     let isCurrent = true;
@@ -341,13 +355,15 @@ export function CanvasRoom({
             : renderPet.pet.frameHeight;
         const width = 96;
         const height = (sourceFrameHeight / sourceFrameWidth) * width;
+        const tapWidth = Math.max(minPetTapSize, width + petTapPadding.x * 2);
+        const tapHeight = Math.max(minPetTapSize, height + petTapPadding.top + petTapPadding.bottom);
 
         return {
           pet: renderPet.pet,
-          x: renderPet.position.x - width / 2,
-          y: renderPet.position.y - height,
-          width,
-          height,
+          x: renderPet.position.x - tapWidth / 2,
+          y: renderPet.position.y - height - petTapPadding.top,
+          width: tapWidth,
+          height: tapHeight,
         };
       });
 
@@ -369,7 +385,13 @@ export function CanvasRoom({
     };
   }, [showDebug]);
 
-  function handleClick(event: MouseEvent<HTMLCanvasElement>) {
+  function handlePointerDown(event: PointerEvent<HTMLCanvasElement>) {
+    if (event.pointerType === "mouse" && event.button !== 0) {
+      return;
+    }
+
+    event.preventDefault();
+
     const assets = assetsRef.current;
 
     if (!petRef.current || !assets) {
@@ -407,5 +429,5 @@ export function CanvasRoom({
     pathRef.current = findPixelPath(assets, positionRef.current, target);
   }
 
-  return <canvas ref={canvasRef} className="room-canvas" onClick={handleClick} />;
+  return <canvas ref={canvasRef} className="room-canvas" onPointerDown={handlePointerDown} />;
 }

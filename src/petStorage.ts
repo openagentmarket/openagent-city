@@ -239,6 +239,8 @@ export async function savePetDraft({
     ? ((existingPet.data().latestVersion as number | undefined) ?? 1) + 1
     : 1;
   const now = serverTimestamp();
+  const description = petJson.description?.trim();
+  const resolvedPackageUrl = packageUrl ?? (duplicatePet?.data().packageUrl as string | undefined);
   const pet: Omit<SavedPet, "createdAt" | "updatedAt"> & {
     createdAt?: unknown;
     updatedAt: unknown;
@@ -250,10 +252,8 @@ export async function savePetDraft({
     localPetId,
     slug,
     displayName: petJson.displayName?.trim() || localPetId,
-    description: petJson.description?.trim() || undefined,
     publicStatus: "",
     spritesheetUrl,
-    packageUrl: packageUrl ?? (duplicatePet?.data().packageUrl as string | undefined),
     frameWidth,
     frameHeight,
     status: "draft",
@@ -262,6 +262,8 @@ export async function savePetDraft({
     latestVersion,
     updatedAt: now,
     petJson,
+    ...(description ? { description } : {}),
+    ...(resolvedPackageUrl ? { packageUrl: resolvedPackageUrl } : {}),
   };
 
   const assetRef = doc(db, "petAssets", assetHash);
