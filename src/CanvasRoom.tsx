@@ -1,5 +1,5 @@
 import { PointerEvent, useEffect, useRef } from "react";
-import { isoPointToLogicalPoint, isoWorldBounds, logicalPointToIsoPoint } from "./game/isometric";
+import { isoDepthForPoint, isoPointToLogicalPoint, isoWorldBounds, logicalPointToIsoPoint } from "./game/isometric";
 import { loadPixelOfficeAssets, PixelOfficeAssets } from "./game/pixelAssets";
 import { findPixelPath, isPixelWalkable, pixelSpawn, pointToPixelTile } from "./game/pixelPathfinding";
 import {
@@ -35,6 +35,7 @@ type Viewport = {
 };
 type PetHitArea = {
   pet: CanvasPetPayload;
+  depth: number;
   x: number;
   y: number;
   width: number;
@@ -432,11 +433,13 @@ export function CanvasRoom({
         const height = (sourceFrameHeight / sourceFrameWidth) * width;
         const tapWidth = Math.max(minPetTapSize, width + petTapPadding.x * 2);
         const tapHeight = Math.max(minPetTapSize, height + petTapPadding.top + petTapPadding.bottom);
+        const isoPosition = logicalPointToIsoPoint(assets, renderPet.position);
 
         return {
           pet: renderPet.pet,
-          x: renderPet.position.x - tapWidth / 2,
-          y: renderPet.position.y - height - petTapPadding.top,
+          depth: isoDepthForPoint(assets, renderPet.position),
+          x: isoPosition.x - tapWidth / 2,
+          y: isoPosition.y - height - petTapPadding.top,
           width: tapWidth,
           height: tapHeight,
         };
@@ -485,14 +488,16 @@ export function CanvasRoom({
       x: camera.x + event.clientX - bounds.left,
       y: camera.y + event.clientY - bounds.top,
     };
-    const clickedPet = [...hitAreasRef.current].reverse().find((area) => {
-      return (
-        targetIso.x >= area.x &&
-        targetIso.x <= area.x + area.width &&
-        targetIso.y >= area.y &&
-        targetIso.y <= area.y + area.height
-      );
-    });
+    const clickedPet = hitAreasRef.current
+      .filter((area) => {
+        return (
+          targetIso.x >= area.x &&
+          targetIso.x <= area.x + area.width &&
+          targetIso.y >= area.y &&
+          targetIso.y <= area.y + area.height
+        );
+      })
+      .sort((left, right) => right.depth - left.depth)[0];
 
     if (clickedPet) {
       onPetClick?.(clickedPet.pet);
