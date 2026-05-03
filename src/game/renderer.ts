@@ -179,7 +179,6 @@ export function drawGuest(context: CanvasRenderingContext2D, guest: GuestPet, ti
 
 export function drawPlayer(context: CanvasRenderingContext2D, state: PlayerRenderState) {
   const { image, pet, position, frameIndex, flipX } = state;
-  const isOnline = pet.isOnline === true;
   const sourceFrameWidth = image.naturalWidth % 8 === 0 ? image.naturalWidth / 8 : pet.frameWidth;
   const sourceFrameHeight = image.naturalHeight % 9 === 0 ? image.naturalHeight / 9 : pet.frameHeight;
   const displayWidth = 96;
@@ -228,7 +227,6 @@ export function drawPlayer(context: CanvasRenderingContext2D, state: PlayerRende
   context.restore();
   drawTextPill(context, pet.name, position.x, position.y + 22, {
     font: "900 13px Avenir Next, sans-serif",
-    onlineDot: isOnline,
   });
 
   const status = pet.status?.trim() || (state.state === "idle" ? "idle" : "");

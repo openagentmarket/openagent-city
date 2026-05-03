@@ -49,7 +49,7 @@ export type PixelOfficeAssets = {
 
 const assetRoot = "/assets/pixel-agents";
 const sourceTileSize = 16;
-const renderScale = 2;
+const renderScale = 3;
 
 const furnitureFolders = [
   "BIN",

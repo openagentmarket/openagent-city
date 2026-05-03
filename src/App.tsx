@@ -3,6 +3,7 @@ import { onAuthStateChanged, signInAnonymously, User } from "firebase/auth";
 import {
   collection,
   doc,
+  getDoc,
   onSnapshot,
   query,
   serverTimestamp,
@@ -45,7 +46,7 @@ type RoomParticipant = CanvasPetPayload & {
   uid: string;
   petId: string;
   description: string;
-  updatedAt?: unknown;
+  assetHash?: string;
 };
 
 const petStatePreviewOptions: { value: PetSpritesheetState; label: string }[] = [
@@ -63,8 +64,6 @@ const petStatePreviewOptions: { value: PetSpritesheetState; label: string }[] = 
 const onboardingStorageKey = "openagent-city:onboarding:v1";
 const defaultRoomId = "codex-city";
 const defaultRoomName = "Codex City";
-const roomPresenceTtlMs = 45_000;
-const roomPresenceHeartbeatMs = 15_000;
 const roomUpdateError = "Could not update Codex City. Check Firestore room rules.";
 const roomJoinError = "Could not join Codex City. Check Firestore room rules.";
 const petStatusError = "Could not save pet status. Check Firestore pet rules.";
@@ -148,17 +147,26 @@ function readImageSize(imageUrl: string) {
   });
 }
 
-function timestampToMillis(value: unknown) {
-  if (
-    value &&
-    typeof value === "object" &&
-    "toMillis" in value &&
-    typeof value.toMillis === "function"
-  ) {
-    return value.toMillis() as number;
+function assetHashFromStorageUrl(value: string) {
+  return decodeURIComponent(value).match(/assets\/([^/]+)/)?.[1] ?? "";
+}
+
+function petPresenceKey(pet: CanvasPetPayload) {
+  return pet.assetHash || assetHashFromStorageUrl(pet.publicImageUrl || pet.imageUrl) || pet.petId || pet.imageUrl;
+}
+
+function dedupeRoomPetsByAsset(pets: RoomParticipant[]) {
+  const petsByAsset = new Map<string, RoomParticipant>();
+
+  for (const pet of pets) {
+    const key = petPresenceKey(pet);
+
+    if (!petsByAsset.has(key)) {
+      petsByAsset.set(key, pet);
+    }
   }
 
-  return 0;
+  return [...petsByAsset.values()];
 }
 
 function downloadNameForPet(pet: CanvasPetPayload) {
@@ -346,7 +354,6 @@ export default function App() {
   const [loadedPet, setLoadedPet] = useState<LoadedPet | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [saveStatus, setSaveStatus] = useState<SaveStatus>("signing-in");
-  const [presenceNow, setPresenceNow] = useState(() => Date.now());
   const [hasLoadedSavedPets, setHasLoadedSavedPets] = useState(false);
   const [identityName, setIdentityName] = useState(initialOnboarding.identityName);
   const [identityBio, setIdentityBio] = useState(initialOnboarding.identityBio);
@@ -569,6 +576,7 @@ export default function App() {
         frameWidth: loadedPet.frameWidth,
         frameHeight: loadedPet.frameHeight,
         petId: loadedPet.savedPet?.petId,
+        assetHash: loadedPet.savedPet?.assetHash,
         description: identityBio,
         publicImageUrl: loadedPet.savedPet?.spritesheetUrl,
         packageUrl: loadedPet.savedPet?.packageUrl,
@@ -584,6 +592,7 @@ export default function App() {
         frameWidth: savedPets[0].frameWidth,
         frameHeight: savedPets[0].frameHeight,
         petId: savedPets[0].petId,
+        assetHash: savedPets[0].assetHash,
         description: identityBio || savedPets[0].description || "",
         publicImageUrl: savedPets[0].spritesheetUrl,
         packageUrl: savedPets[0].packageUrl,
@@ -634,53 +643,48 @@ export default function App() {
     const roomRef = doc(db, "rooms", defaultRoomId);
     const participantRef = doc(db, "rooms", defaultRoomId, "participants", user.uid);
 
-    const writePresence = (includeJoinedAt = false) => {
-      const now = serverTimestamp();
+    const now = serverTimestamp();
 
-      void setDoc(roomRef, {
-        name: defaultRoomName,
-        visibility: "public",
-        updatedAt: now,
-        createdByUid: user.uid,
+    void setDoc(roomRef, {
+      name: defaultRoomName,
+      visibility: "public",
+      updatedAt: now,
+      createdByUid: user.uid,
+    })
+      .then(() => {
+        setError((current) => (current === roomUpdateError ? null : current));
       })
-        .then(() => {
-          setError((current) => (current === roomUpdateError ? null : current));
-        })
-        .catch(() => {
-          setError(roomUpdateError);
-        });
+      .catch(() => {
+        setError(roomUpdateError);
+      });
 
-      const participantPayload = {
-        ownerUid: user.uid,
-        petId: petPayload.petId,
-        displayName: petPayload.name,
-        description: petPayload.description ?? "",
-        status: petPayload.status ?? "",
-        animationState: petPayload.animationState,
-        spritesheetUrl: petPayload.publicImageUrl,
-        packageUrl: petPayload.packageUrl ?? "",
-        frameWidth: petPayload.frameWidth,
-        frameHeight: petPayload.frameHeight,
-        updatedAt: now,
-        ...(includeJoinedAt ? { joinedAt: now } : {}),
-      };
+    void getDoc(participantRef)
+      .then((participantSnapshot) => {
+        const participantPayload = {
+          ownerUid: user.uid,
+          petId: petPayload.petId,
+          displayName: petPayload.name,
+          description: petPayload.description ?? "",
+          status: petPayload.status ?? "",
+          animationState: petPayload.animationState,
+          ...(petPayload.assetHash ? { assetHash: petPayload.assetHash } : {}),
+          spritesheetUrl: petPayload.publicImageUrl,
+          packageUrl: petPayload.packageUrl ?? "",
+          frameWidth: petPayload.frameWidth,
+          frameHeight: petPayload.frameHeight,
+          updatedAt: now,
+          ...(participantSnapshot.exists() ? {} : { joinedAt: now }),
+        };
 
-      void setDoc(participantRef, participantPayload, { merge: true })
-        .then(() => {
-          setError((current) => (current === roomJoinError ? null : current));
-        })
-        .catch((caughtError) => {
-          console.error("Codex City participant join failed", caughtError);
-          setError(roomJoinError);
-        });
-    };
-
-    writePresence(true);
-    const heartbeat = window.setInterval(() => writePresence(), roomPresenceHeartbeatMs);
-
-    return () => {
-      window.clearInterval(heartbeat);
-    };
+        return setDoc(participantRef, participantPayload, { merge: true });
+      })
+      .then(() => {
+        setError((current) => (current === roomJoinError ? null : current));
+      })
+      .catch((caughtError) => {
+        console.error("Codex City participant join failed", caughtError);
+        setError(roomJoinError);
+      });
   }, [hasEnteredCity, petPayload, user]);
 
   useEffect(() => {
@@ -703,11 +707,11 @@ export default function App() {
                 description: String(data.description ?? ""),
                 status: String(data.status ?? ""),
                 animationState: normalizePetAnimationState(data.animationState),
+                assetHash: String(data.assetHash ?? ""),
                 imageUrl: String(data.spritesheetUrl ?? ""),
                 packageUrl: String(data.packageUrl ?? ""),
                 frameWidth: Number(data.frameWidth ?? 128),
                 frameHeight: Number(data.frameHeight ?? 128),
-                updatedAt: data.updatedAt,
               };
             }),
         );
@@ -718,19 +722,6 @@ export default function App() {
     );
 
     return unsubscribe;
-  }, [user]);
-
-  useEffect(() => {
-    if (!user) {
-      return;
-    }
-
-    setPresenceNow(Date.now());
-    const timer = window.setInterval(() => setPresenceNow(Date.now()), roomPresenceHeartbeatMs);
-
-    return () => {
-      window.clearInterval(timer);
-    };
   }, [user]);
 
   const petAssetKey = petPayload?.imageUrl ?? "";
@@ -780,20 +771,16 @@ export default function App() {
   }, [loadedPet, savedPets, selectedPet]);
 
   const isRestoringPet = saveStatus === "signing-in" || (!!user && !hasLoadedSavedPets);
-  const activeAfter = presenceNow - roomPresenceTtlMs;
-  const visibleRoomPets = roomPets
-    .map((roomPet) => ({
-      ...roomPet,
-      isOnline: timestampToMillis(roomPet.updatedAt) >= activeAfter,
-    }))
-    .sort((a, b) => Number(b.isOnline) - Number(a.isOnline));
-  const otherRoomPets = visibleRoomPets.filter((roomPet) => roomPet.uid !== user?.uid && roomPet.imageUrl);
-  const residentCount = Math.max(roomPets.length, hasEnteredCity && petPayload ? 1 : 0);
-  const onlineCount = Math.max(
-    visibleRoomPets.filter((roomPet) => roomPet.isOnline).length,
-    hasEnteredCity && petPayload ? 1 : 0,
+  const currentPetPresenceKey = petPayload ? petPresenceKey(petPayload) : "";
+  const renderableRoomPets = roomPets.filter((roomPet) => roomPet.imageUrl);
+  const otherRoomPets = dedupeRoomPetsByAsset(
+    renderableRoomPets.filter(
+      (roomPet) => roomPet.uid !== user?.uid && petPresenceKey(roomPet) !== currentPetPresenceKey,
+    ),
   );
-  const canvasPet = petPayload && hasEnteredCity ? { ...petPayload, isOnline: true } : petPayload;
+  const dedupedResidentCount = dedupeRoomPetsByAsset(renderableRoomPets).length;
+  const residentCount = Math.max(dedupedResidentCount, hasEnteredCity && petPayload ? 1 : 0);
+  const canvasPet = petPayload;
 
   const uploadLabel =
     saveStatus === "signing-in"
@@ -953,8 +940,7 @@ export default function App() {
       ) : (
         <section className="room-panel">
           <p className="room-badge">
-            {defaultRoomName} · {residentCount} resident{residentCount === 1 ? "" : "s"} ·{" "}
-            {onlineCount} online
+            {defaultRoomName} · {residentCount} resident{residentCount === 1 ? "" : "s"}
           </p>
           <label>
             <span>Status</span>

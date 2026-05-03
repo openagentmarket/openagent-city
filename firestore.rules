@@ -26,6 +26,7 @@ service cloud.firestore {
         "description",
         "status",
         "animationState",
+        "assetHash",
         "spritesheetUrl",
         "packageUrl",
         "frameWidth",
@@ -39,6 +40,7 @@ service cloud.firestore {
       && request.resource.data.description is string
       && (!request.resource.data.keys().hasAny(["status"]) || request.resource.data.status is string)
       && (!request.resource.data.keys().hasAny(["animationState"]) || request.resource.data.animationState is string)
+      && (!request.resource.data.keys().hasAny(["assetHash"]) || request.resource.data.assetHash is string)
       && request.resource.data.spritesheetUrl is string
       && (!request.resource.data.keys().hasAny(["packageUrl"]) || request.resource.data.packageUrl is string)
       && request.resource.data.frameWidth is number

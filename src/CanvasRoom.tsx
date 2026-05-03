@@ -17,11 +17,11 @@ export type CanvasPetPayload = {
   imageUrl: string;
   name: string;
   status?: string;
-  isOnline?: boolean;
   animationState: PetAnimationState;
   frameWidth: number;
   frameHeight: number;
   petId?: string;
+  assetHash?: string;
   description?: string;
   publicImageUrl?: string;
   packageUrl?: string;
