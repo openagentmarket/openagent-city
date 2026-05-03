@@ -1,7 +1,7 @@
 import { PointerEvent, useEffect, useRef } from "react";
 import { isoPointToLogicalPoint, isoWorldBounds, logicalPointToIsoPoint } from "./game/isometric";
 import { loadPixelOfficeAssets, PixelOfficeAssets } from "./game/pixelAssets";
-import { findPixelPath, pixelSpawn } from "./game/pixelPathfinding";
+import { findPixelPath, isPixelWalkable, pixelSpawn, pointToPixelTile } from "./game/pixelPathfinding";
 import {
   drawPixelCredit,
   drawPixelEmptyMarker,
@@ -47,6 +47,20 @@ const petTapPadding = {
   bottom: 36,
 };
 const minPetTapSize = 128;
+const remotePetTileSlots = [
+  { col: 10, row: 18 },
+  { col: 37, row: 18 },
+  { col: 9, row: 8 },
+  { col: 40, row: 9 },
+  { col: 24, row: 19 },
+  { col: 17, row: 6 },
+  { col: 32, row: 6 },
+  { col: 44, row: 14 },
+  { col: 5, row: 14 },
+  { col: 29, row: 12 },
+  { col: 18, row: 16 },
+  { col: 42, row: 20 },
+];
 
 function moveAlongPath(position: Point, path: Point[], speed: number, delta: number) {
   let remaining = (speed * delta) / 1000;
@@ -89,6 +103,71 @@ function spritesheetStateForPlayer(playerState: PlayerState, petState: PetAnimat
 
 function clamp(value: number, min: number, max: number) {
   return Math.max(min, Math.min(max, value));
+}
+
+function petLayoutKey(pet: CanvasPetPayload) {
+  return pet.petId ?? pet.publicImageUrl ?? pet.imageUrl;
+}
+
+function hashString(value: string) {
+  let hash = 0;
+
+  for (let index = 0; index < value.length; index += 1) {
+    hash = (hash * 31 + value.charCodeAt(index)) | 0;
+  }
+
+  return Math.abs(hash);
+}
+
+function tileCenter(assets: PixelOfficeAssets, col: number, row: number): Point {
+  return {
+    x: assets.origin.x + (col + 0.5) * assets.tileSize,
+    y: assets.origin.y + (row + 0.5) * assets.tileSize,
+  };
+}
+
+function nearestWalkablePoint(assets: PixelOfficeAssets, point: Point) {
+  const target = pointToPixelTile(assets, point);
+
+  if (isPixelWalkable(assets, target)) {
+    return tileCenter(assets, target.col, target.row);
+  }
+
+  for (let radius = 1; radius <= 6; radius += 1) {
+    for (let rowOffset = -radius; rowOffset <= radius; rowOffset += 1) {
+      for (let colOffset = -radius; colOffset <= radius; colOffset += 1) {
+        if (Math.max(Math.abs(colOffset), Math.abs(rowOffset)) !== radius) {
+          continue;
+        }
+
+        const tile = {
+          col: target.col + colOffset,
+          row: target.row + rowOffset,
+        };
+
+        if (isPixelWalkable(assets, tile)) {
+          return tileCenter(assets, tile.col, tile.row);
+        }
+      }
+    }
+  }
+
+  return point;
+}
+
+function remotePetPosition(assets: PixelOfficeAssets, slotIndex: number, key: string) {
+  const slot = remotePetTileSlots[slotIndex % remotePetTileSlots.length];
+  const ring = Math.floor(slotIndex / remotePetTileSlots.length);
+  const hash = hashString(key);
+  const driftCol = ring * 2 * (hash % 2 === 0 ? 1 : -1);
+  const driftRow = ring * (Math.floor(hash / 2) % 2 === 0 ? 1 : -1);
+  const jitterX = (hash % 3 - 1) * 6;
+  const jitterY = (Math.floor(hash / 3) % 3 - 1) * 6;
+
+  return nearestWalkablePoint(assets, {
+    x: assets.origin.x + (slot.col + driftCol + 0.5) * assets.tileSize + jitterX,
+    y: assets.origin.y + (slot.row + driftRow + 0.5) * assets.tileSize + jitterY,
+  });
 }
 
 function computeCamera(
@@ -190,7 +269,7 @@ export function CanvasRoom({
     otherPetsRef.current = otherPets;
 
     for (const otherPet of otherPets) {
-      const key = otherPet.petId ?? otherPet.imageUrl;
+      const key = petLayoutKey(otherPet);
 
       if (otherImagesRef.current.has(key)) {
         continue;
@@ -316,26 +395,22 @@ export function CanvasRoom({
               ),
             }
           : null;
-      const remotePlayers = currentOtherPets
+      const sortedOtherPets = [...currentOtherPets].sort((left, right) =>
+        petLayoutKey(left).localeCompare(petLayoutKey(right)),
+      );
+      const remotePlayers = sortedOtherPets
         .map((otherPet, index) => {
-          const key = otherPet.petId ?? otherPet.imageUrl;
+          const key = petLayoutKey(otherPet);
           const otherImage = otherImagesRef.current.get(key);
 
           if (!otherImage) {
             return null;
           }
 
-          const spawn = pixelSpawn(assets);
-          const angle = (index / Math.max(1, currentOtherPets.length)) * Math.PI * 2 - Math.PI / 2;
-          const radius = 120 + (index % 2) * 54;
-
           return {
             image: otherImage,
             pet: otherPet,
-            position: {
-              x: spawn.x + Math.cos(angle) * radius,
-              y: spawn.y + Math.sin(angle) * radius * 0.55,
-            },
+            position: remotePetPosition(assets, index, key),
             frameIndex: Math.floor(time / 180 + index),
             flipX: index % 2 === 0,
             state: "idle" as const,

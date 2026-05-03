@@ -684,7 +684,7 @@ export default function App() {
   }, [hasEnteredCity, petPayload, user]);
 
   useEffect(() => {
-    if (!hasEnteredCity) {
+    if (!user) {
       setRoomPets([]);
       return;
     }
@@ -718,10 +718,10 @@ export default function App() {
     );
 
     return unsubscribe;
-  }, [hasEnteredCity]);
+  }, [user]);
 
   useEffect(() => {
-    if (!hasEnteredCity) {
+    if (!user) {
       return;
     }
 
@@ -731,7 +731,7 @@ export default function App() {
     return () => {
       window.clearInterval(timer);
     };
-  }, [hasEnteredCity]);
+  }, [user]);
 
   const petAssetKey = petPayload?.imageUrl ?? "";
 
