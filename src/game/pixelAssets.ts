@@ -79,9 +79,6 @@ const furnitureFolders = [
   "WOODEN_CHAIR",
 ];
 
-const roomWidthExpansion = 8;
-const rightSideFurnitureShiftStartCol = 12;
-
 const proceduralObjectFootprints = new Map<string, PixelObjectFootprint>([
   ["ISO_HOUSE", { width: 3, height: 3 }],
   ["ISO_WORKSHOP", { width: 4, height: 3 }],
@@ -93,38 +90,9 @@ const proceduralObjectFootprints = new Map<string, PixelObjectFootprint>([
   ["ISO_CRYSTAL", { width: 1, height: 1 }],
 ]);
 
-function expandedPixelOfficeLayout(layout: PixelOfficeLayout): PixelOfficeLayout {
-  if (roomWidthExpansion <= 0) {
-    return layout;
-  }
-
-  const expandedCols = layout.cols + roomWidthExpansion;
-  const tiles = Array.from({ length: layout.rows }, (_, row) => {
-    const start = row * layout.cols;
-    const rowTiles = layout.tiles.slice(start, start + layout.cols);
-    const rightWall = rowTiles.at(-1) ?? 255;
-    const extensionTile = rowTiles.at(-2) ?? 0;
-
-    return [...rowTiles.slice(0, -1), ...Array(roomWidthExpansion).fill(extensionTile), rightWall];
-  }).flat();
-
-  return {
-    ...layout,
-    cols: expandedCols,
-    tiles,
-    furniture: layout.furniture.map((placement) => ({
-      ...placement,
-      col:
-        placement.col >= rightSideFurnitureShiftStartCol
-          ? placement.col + roomWidthExpansion
-          : placement.col,
-    })),
-  };
-}
-
 function makeVillageLayout(): PixelOfficeLayout {
-  const cols = 48;
-  const rows = 24;
+  const cols = 96;
+  const rows = 48;
   const tiles = Array.from({ length: cols * rows }, (_, index) => {
     const col = index % cols;
     const row = Math.floor(index / cols);
@@ -133,20 +101,22 @@ function makeVillageLayout(): PixelOfficeLayout {
       return 255;
     }
 
-    if (col >= cols - 7 && row > 16) {
+    if (col >= cols - 14 && row > rows - 14) {
       return 1;
     }
 
     if (
       Math.abs(col - row - 4) <= 1 ||
-      Math.abs(col + row - 28) <= 1 ||
-      Math.abs(col - row - 18) <= 1 ||
-      Math.abs(col + row - (cols + 4)) <= 1
+      Math.abs(col - row - 26) <= 1 ||
+      Math.abs(col - row - 50) <= 1 ||
+      Math.abs(col + row - 44) <= 1 ||
+      Math.abs(col + row - 72) <= 1 ||
+      Math.abs(col + row - 104) <= 1
     ) {
       return 7;
     }
 
-    if (row > 17 && col < 10) {
+    if (row > rows - 8 && col < 18) {
       return 9;
     }
 
@@ -166,8 +136,17 @@ function makeVillageLayout(): PixelOfficeLayout {
       { uid: "v-workshop-2", type: "ISO_WORKSHOP", col: 31, row: 14 },
       { uid: "v-storage", type: "ISO_STORAGE", col: 8, row: 13 },
       { uid: "v-storage-2", type: "ISO_STORAGE", col: 39, row: 13 },
+      { uid: "v-storage-3", type: "ISO_STORAGE", col: 71, row: 17 },
+      { uid: "v-storage-4", type: "ISO_STORAGE", col: 18, row: 31 },
       { uid: "v-portal", type: "ISO_PORTAL", col: 22, row: 6 },
       { uid: "v-portal-2", type: "ISO_PORTAL", col: 40, row: 6 },
+      { uid: "v-portal-3", type: "ISO_PORTAL", col: 66, row: 13 },
+      { uid: "v-portal-4", type: "ISO_PORTAL", col: 46, row: 34 },
+      { uid: "v-house-4", type: "ISO_HOUSE", col: 58, row: 10 },
+      { uid: "v-house-5", type: "ISO_HOUSE", col: 78, row: 22 },
+      { uid: "v-house-6", type: "ISO_HOUSE", col: 28, row: 33 },
+      { uid: "v-workshop-3", type: "ISO_WORKSHOP", col: 62, row: 27 },
+      { uid: "v-workshop-4", type: "ISO_WORKSHOP", col: 48, row: 39 },
       { uid: "v-tree-1", type: "ISO_APPLE_TREE", col: 6, row: 9 },
       { uid: "v-tree-2", type: "ISO_APPLE_TREE", col: 7, row: 10 },
       { uid: "v-tree-3", type: "ISO_TREE", col: 24, row: 12 },
@@ -179,6 +158,13 @@ function makeVillageLayout(): PixelOfficeLayout {
       { uid: "v-tree-9", type: "ISO_TREE", col: 36, row: 7 },
       { uid: "v-tree-10", type: "ISO_APPLE_TREE", col: 43, row: 10 },
       { uid: "v-tree-11", type: "ISO_TREE", col: 45, row: 15 },
+      { uid: "v-tree-12", type: "ISO_TREE", col: 54, row: 8 },
+      { uid: "v-tree-13", type: "ISO_APPLE_TREE", col: 72, row: 12 },
+      { uid: "v-tree-14", type: "ISO_TREE", col: 83, row: 15 },
+      { uid: "v-tree-15", type: "ISO_TREE", col: 88, row: 28 },
+      { uid: "v-tree-16", type: "ISO_APPLE_TREE", col: 64, row: 34 },
+      { uid: "v-tree-17", type: "ISO_TREE", col: 37, row: 38 },
+      { uid: "v-tree-18", type: "ISO_TREE", col: 14, row: 39 },
       { uid: "v-rock-1", type: "ISO_ROCK", col: 5, row: 16 },
       { uid: "v-rock-2", type: "ISO_CRYSTAL", col: 10, row: 17 },
       { uid: "v-crystal-1", type: "ISO_CRYSTAL", col: 23, row: 15 },
@@ -186,6 +172,10 @@ function makeVillageLayout(): PixelOfficeLayout {
       { uid: "v-rock-4", type: "ISO_ROCK", col: 29, row: 18 },
       { uid: "v-rock-5", type: "ISO_CRYSTAL", col: 37, row: 18 },
       { uid: "v-rock-6", type: "ISO_ROCK", col: 44, row: 19 },
+      { uid: "v-rock-7", type: "ISO_ROCK", col: 52, row: 24 },
+      { uid: "v-rock-8", type: "ISO_CRYSTAL", col: 68, row: 31 },
+      { uid: "v-rock-9", type: "ISO_ROCK", col: 79, row: 36 },
+      { uid: "v-rock-10", type: "ISO_CRYSTAL", col: 23, row: 41 },
     ],
   };
 }

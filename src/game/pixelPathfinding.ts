@@ -30,9 +30,11 @@ export function pixelWorldSize(assets: PixelOfficeAssets) {
 }
 
 export function pixelSpawn(assets: PixelOfficeAssets): Point {
+  const spawnRow = Math.min(assets.layout.rows - 2, Math.floor(assets.layout.rows * 0.7));
+
   return {
     x: assets.origin.x + Math.floor(assets.layout.cols / 2) * assets.tileSize + assets.tileSize / 2,
-    y: assets.origin.y + 17 * assets.tileSize + assets.tileSize / 2,
+    y: assets.origin.y + spawnRow * assets.tileSize + assets.tileSize / 2,
   };
 }
 

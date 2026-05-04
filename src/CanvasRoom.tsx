@@ -60,8 +60,12 @@ const petTapPadding = {
 const minPetTapSize = 128;
 const petCullPadding = 220;
 const remotePetTileSlots = [
+  { col: 48, row: 34 },
   { col: 10, row: 18 },
   { col: 37, row: 18 },
+  { col: 62, row: 19 },
+  { col: 78, row: 27 },
+  { col: 28, row: 36 },
   { col: 9, row: 8 },
   { col: 40, row: 9 },
   { col: 24, row: 19 },
@@ -72,6 +76,16 @@ const remotePetTileSlots = [
   { col: 29, row: 12 },
   { col: 18, row: 16 },
   { col: 42, row: 20 },
+  { col: 57, row: 9 },
+  { col: 69, row: 14 },
+  { col: 84, row: 16 },
+  { col: 88, row: 31 },
+  { col: 72, row: 38 },
+  { col: 54, row: 39 },
+  { col: 36, row: 42 },
+  { col: 16, row: 39 },
+  { col: 12, row: 29 },
+  { col: 91, row: 23 },
 ];
 
 function moveAlongPath(position: Point, path: Point[], speed: number, delta: number) {
@@ -540,7 +554,7 @@ export function CanvasRoom({
       context.save();
       context.translate(-camera.x, -camera.y);
 
-      drawPixelOfficeBackground(context, assets);
+      drawPixelOfficeBackground(context, assets, viewRect);
 
       const currentPet = petRef.current;
       const currentOtherPets = otherPetsRef.current;

@@ -37,6 +37,9 @@ export type IsoViewRect = {
 
 const officeGuests: GuestPet[] = [];
 const entityCullPadding = 260;
+const backgroundChunkSize = 1024;
+const backgroundChunkPadding = 160;
+const maxBackgroundChunksPerMap = 36;
 
 const tilePalette = new Map<number, { fill: string; stroke: string }>([
   [0, { fill: "#5d8a57", stroke: "#416940" }],
@@ -46,10 +49,16 @@ const tilePalette = new Map<number, { fill: string; stroke: string }>([
   [9, { fill: "#747c74", stroke: "#5b625b" }],
   [255, { fill: "#26231f", stroke: "#1a1816" }],
 ]);
-const backgroundCache = new WeakMap<
-  PixelOfficeAssets,
-  { canvas: HTMLCanvasElement; minX: number; minY: number }
->();
+type BackgroundChunk = {
+  canvas: HTMLCanvasElement;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  lastUsed: number;
+};
+const backgroundCache = new WeakMap<PixelOfficeAssets, Map<string, BackgroundChunk>>();
+let backgroundCacheTick = 0;
 
 function hash01(col: number, row: number, salt = 0) {
   const value = Math.sin(col * 127.1 + row * 311.7 + salt * 74.7) * 43758.5453123;
@@ -609,11 +618,57 @@ function playerBounds(player: PixelRenderPlayer & { position: Point }) {
   };
 }
 
-function createPixelOfficeBackgroundCache(assets: PixelOfficeAssets) {
+function backgroundChunkKey(col: number, row: number) {
+  return `${col},${row}`;
+}
+
+function backgroundChunkBounds(assets: PixelOfficeAssets, col: number, row: number) {
   const bounds = isoWorldBounds(assets);
+  const x = bounds.minX + col * backgroundChunkSize;
+  const y = bounds.minY + row * backgroundChunkSize;
+
+  return {
+    x,
+    y,
+    width: Math.max(0, Math.min(backgroundChunkSize, bounds.maxX - x)),
+    height: Math.max(0, Math.min(backgroundChunkSize, bounds.maxY - y)),
+  };
+}
+
+function pruneBackgroundChunks(cache: Map<string, BackgroundChunk>) {
+  if (cache.size <= maxBackgroundChunksPerMap) {
+    return;
+  }
+
+  const chunks = [...cache.entries()].sort(([, left], [, right]) => left.lastUsed - right.lastUsed);
+  const deleteCount = cache.size - maxBackgroundChunksPerMap;
+
+  for (const [key] of chunks.slice(0, deleteCount)) {
+    cache.delete(key);
+  }
+}
+
+function getBackgroundChunkCache(assets: PixelOfficeAssets) {
+  let cache = backgroundCache.get(assets);
+
+  if (!cache) {
+    cache = new Map();
+    backgroundCache.set(assets, cache);
+  }
+
+  return cache;
+}
+
+function createPixelOfficeBackgroundChunk(assets: PixelOfficeAssets, col: number, row: number) {
+  const chunkBounds = backgroundChunkBounds(assets, col, row);
+
+  if (chunkBounds.width <= 0 || chunkBounds.height <= 0) {
+    return null;
+  }
+
   const canvas = document.createElement("canvas");
-  canvas.width = Math.ceil(bounds.width);
-  canvas.height = Math.ceil(bounds.height);
+  canvas.width = Math.ceil(chunkBounds.width);
+  canvas.height = Math.ceil(chunkBounds.height);
 
   const context = canvas.getContext("2d");
 
@@ -622,26 +677,58 @@ function createPixelOfficeBackgroundCache(assets: PixelOfficeAssets) {
   }
 
   context.imageSmoothingEnabled = false;
-  context.translate(-bounds.minX, -bounds.minY);
+  context.translate(-chunkBounds.x, -chunkBounds.y);
   drawFloor(context, assets, 0);
 
   return {
     canvas,
-    minX: bounds.minX,
-    minY: bounds.minY,
+    ...chunkBounds,
+    lastUsed: backgroundCacheTick,
   };
 }
 
-export function drawPixelOfficeBackground(context: CanvasRenderingContext2D, assets: PixelOfficeAssets) {
-  const cached = backgroundCache.get(assets) ?? createPixelOfficeBackgroundCache(assets);
+export function drawPixelOfficeBackground(
+  context: CanvasRenderingContext2D,
+  assets: PixelOfficeAssets,
+  viewRect: IsoViewRect,
+) {
+  const bounds = isoWorldBounds(assets);
+  const cache = getBackgroundChunkCache(assets);
+  const visible = paddedRect(viewRect, backgroundChunkPadding);
+  const startCol = Math.max(0, Math.floor((visible.x - bounds.minX) / backgroundChunkSize));
+  const endCol = Math.min(
+    Math.ceil(bounds.width / backgroundChunkSize) - 1,
+    Math.floor((visible.x + visible.width - bounds.minX) / backgroundChunkSize),
+  );
+  const startRow = Math.max(0, Math.floor((visible.y - bounds.minY) / backgroundChunkSize));
+  const endRow = Math.min(
+    Math.ceil(bounds.height / backgroundChunkSize) - 1,
+    Math.floor((visible.y + visible.height - bounds.minY) / backgroundChunkSize),
+  );
 
-  if (!cached) {
+  if (endCol < startCol || endRow < startRow) {
     drawFloor(context, assets, 0);
     return;
   }
 
-  backgroundCache.set(assets, cached);
-  context.drawImage(cached.canvas, cached.minX, cached.minY);
+  backgroundCacheTick += 1;
+
+  for (let row = startRow; row <= endRow; row += 1) {
+    for (let col = startCol; col <= endCol; col += 1) {
+      const key = backgroundChunkKey(col, row);
+      const cached = cache.get(key) ?? createPixelOfficeBackgroundChunk(assets, col, row);
+
+      if (!cached) {
+        continue;
+      }
+
+      cached.lastUsed = backgroundCacheTick;
+      cache.set(key, cached);
+      context.drawImage(cached.canvas, cached.x, cached.y);
+    }
+  }
+
+  pruneBackgroundChunks(cache);
 }
 
 export function drawPixelOfficeEntities(
