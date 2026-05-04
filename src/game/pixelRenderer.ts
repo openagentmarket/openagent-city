@@ -28,8 +28,15 @@ export type PixelRenderPlayer = {
   state: "idle" | "walk";
   spritesheetState: PetSpritesheetState;
 };
+export type IsoViewRect = {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+};
 
 const officeGuests: GuestPet[] = [];
+const entityCullPadding = 260;
 
 const tilePalette = new Map<number, { fill: string; stroke: string }>([
   [0, { fill: "#5d8a57", stroke: "#416940" }],
@@ -521,6 +528,87 @@ function drawFurniture(
   context.restore();
 }
 
+function paddedRect(rect: IsoViewRect, padding: number) {
+  return {
+    x: rect.x - padding,
+    y: rect.y - padding,
+    width: rect.width + padding * 2,
+    height: rect.height + padding * 2,
+  };
+}
+
+function rectsIntersect(
+  left: { x: number; y: number; width: number; height: number },
+  right: { x: number; y: number; width: number; height: number },
+) {
+  return (
+    left.x <= right.x + right.width &&
+    left.x + left.width >= right.x &&
+    left.y <= right.y + right.height &&
+    left.y + left.height >= right.y
+  );
+}
+
+function furnitureBounds(assets: PixelOfficeAssets, placement: PixelFurniturePlacement) {
+  const type = normalizeFurnitureType(placement.type);
+  const footprint = pixelObjectFootprint(assets, placement.type);
+
+  if (footprint) {
+    const base = logicalPointToIsoPoint(assets, {
+      x: assets.origin.x + (placement.col + footprint.width / 2) * assets.tileSize,
+      y: assets.origin.y + (placement.row + footprint.height) * assets.tileSize,
+    });
+    const isoTile = isoTileSize(assets);
+    const width = Math.max(160, footprint.width * isoTile.width * 1.8);
+    const height = type === "ISO_PORTAL" ? 160 : Math.max(150, footprint.height * isoTile.height * 3.8);
+
+    return {
+      x: base.x - width / 2 - 20,
+      y: base.y - height - 20,
+      width: width + 40,
+      height: height + 80,
+    };
+  }
+
+  const asset = assets.furniture.get(type);
+
+  if (!asset) {
+    return null;
+  }
+
+  const localPosition = furniturePosition(placement, assets.tileSize);
+  const position = logicalPointToIsoPoint(assets, {
+    x: assets.origin.x + localPosition.x + (asset.footprintW * assets.tileSize) / 2,
+    y: assets.origin.y + localPosition.y + asset.footprintH * assets.tileSize,
+  });
+  const width = asset.width * assets.scale;
+  const height = asset.height * assets.scale;
+  const anchorY = isoTileSize(assets).height * 0.35;
+
+  return {
+    x: position.x - width / 2 - 24,
+    y: position.y - height + anchorY - 24,
+    width: width + 48,
+    height: height + 72,
+  };
+}
+
+function playerBounds(player: PixelRenderPlayer & { position: Point }) {
+  const sourceFrameWidth =
+    player.image.naturalWidth % 8 === 0 ? player.image.naturalWidth / 8 : player.pet.frameWidth;
+  const sourceFrameHeight =
+    player.image.naturalHeight % 9 === 0 ? player.image.naturalHeight / 9 : player.pet.frameHeight;
+  const width = 140;
+  const height = (sourceFrameHeight / sourceFrameWidth) * 96 + 94;
+
+  return {
+    x: player.position.x - width / 2,
+    y: player.position.y - height,
+    width,
+    height: height + 54,
+  };
+}
+
 function createPixelOfficeBackgroundCache(assets: PixelOfficeAssets) {
   const bounds = isoWorldBounds(assets);
   const canvas = document.createElement("canvas");
@@ -562,6 +650,7 @@ export function drawPixelOfficeEntities(
   player: PixelRenderPlayer | null,
   remotePlayers: PixelRenderPlayer[],
   path: Point[],
+  viewRect: IsoViewRect,
   time: number,
   showDebug: boolean,
 ) {
@@ -570,42 +659,81 @@ export function drawPixelOfficeEntities(
   }
 
   drawPath(context, path.map((point) => logicalPointToIsoPoint(assets, point)));
+  const cullRect = paddedRect(viewRect, entityCullPadding);
 
   const entries = [
-    ...assets.layout.furniture.map((placement) => ({
-      type: "furniture" as const,
-      depth: placement.col + furnitureDepth(assets, placement.type, placement.row),
-      placement,
-    })),
-    ...officeGuests.map((guest) => ({
-      type: "guest" as const,
-      depth: Math.floor(guest.y / assets.tileSize),
-      guest: {
+    ...assets.layout.furniture.flatMap((placement) => {
+      const bounds = furnitureBounds(assets, placement);
+
+      if (bounds && !rectsIntersect(bounds, cullRect)) {
+        return [];
+      }
+
+      return [
+        {
+          type: "furniture" as const,
+          depth: placement.col + furnitureDepth(assets, placement.type, placement.row),
+          placement,
+        },
+      ];
+    }),
+    ...officeGuests.flatMap((guest) => {
+      const resolvedGuest = {
         ...guest,
         x: assets.origin.x + guest.x,
         y: assets.origin.y + guest.y,
-      },
-    })),
+      };
+
+      if (!rectsIntersect({ x: resolvedGuest.x - 80, y: resolvedGuest.y - 130, width: 160, height: 190 }, cullRect)) {
+        return [];
+      }
+
+      return [
+        {
+          type: "guest" as const,
+          depth: Math.floor(guest.y / assets.tileSize),
+          guest: resolvedGuest,
+        },
+      ];
+    }),
     ...(player
-      ? [
-          {
-            type: "player" as const,
-            depth: isoDepthForPoint(assets, player.position),
-            player: {
-              ...player,
-              position: logicalPointToIsoPoint(assets, player.position),
+      ? (() => {
+          const resolvedPlayer = {
+            ...player,
+            position: logicalPointToIsoPoint(assets, player.position),
+          };
+
+          if (!rectsIntersect(playerBounds(resolvedPlayer), cullRect)) {
+            return [];
+          }
+
+          return [
+            {
+              type: "player" as const,
+              depth: isoDepthForPoint(assets, player.position),
+              player: resolvedPlayer,
             },
-          },
-        ]
+          ];
+        })()
       : []),
-    ...remotePlayers.map((remotePlayer) => ({
-      type: "player" as const,
-      depth: isoDepthForPoint(assets, remotePlayer.position),
-      player: {
+    ...remotePlayers.flatMap((remotePlayer) => {
+      const resolvedPlayer = {
         ...remotePlayer,
         position: logicalPointToIsoPoint(assets, remotePlayer.position),
-      },
-    })),
+      };
+
+      if (!rectsIntersect(playerBounds(resolvedPlayer), cullRect)) {
+        return [];
+      }
+
+      return [
+        {
+          type: "player" as const,
+          depth: isoDepthForPoint(assets, remotePlayer.position),
+          player: resolvedPlayer,
+        },
+      ];
+    }),
   ].sort((a, b) => a.depth - b.depth);
 
   for (const entry of entries) {

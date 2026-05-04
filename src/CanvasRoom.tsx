@@ -9,6 +9,7 @@ import {
   drawPixelOfficeBackground,
   drawPixelOfficeEntities,
   drawPixelPetLoadingMarker,
+  IsoViewRect,
 } from "./game/pixelRenderer";
 import { Point } from "./game/types";
 import { loadCachedImage } from "./imageCache";
@@ -57,6 +58,7 @@ const petTapPadding = {
   bottom: 36,
 };
 const minPetTapSize = 128;
+const petCullPadding = 220;
 const remotePetTileSlots = [
   { col: 10, row: 18 },
   { col: 37, row: 18 },
@@ -113,6 +115,27 @@ function spritesheetStateForPlayer(playerState: PlayerState, petState: PetAnimat
 
 function clamp(value: number, min: number, max: number) {
   return Math.max(min, Math.min(max, value));
+}
+
+function rectsIntersect(
+  left: { x: number; y: number; width: number; height: number },
+  right: { x: number; y: number; width: number; height: number },
+) {
+  return (
+    left.x <= right.x + right.width &&
+    left.x + left.width >= right.x &&
+    left.y <= right.y + right.height &&
+    left.y + left.height >= right.y
+  );
+}
+
+function paddedViewRect(viewRect: IsoViewRect, padding: number) {
+  return {
+    x: viewRect.x - padding,
+    y: viewRect.y - padding,
+    width: viewRect.width + padding * 2,
+    height: viewRect.height + padding * 2,
+  };
 }
 
 function petLayoutKey(pet: CanvasPetPayload) {
@@ -255,6 +278,34 @@ function drawPetBubble(
     context.fillText(line, x + paddingX, y + paddingY + lineHeight * index + lineHeight / 2);
   });
   context.restore();
+}
+
+function renderPetBounds(
+  assets: PixelOfficeAssets,
+  renderPet: {
+    image: HTMLImageElement;
+    pet: CanvasPetPayload;
+    position: Point;
+  },
+) {
+  const sourceFrameWidth =
+    renderPet.image.naturalWidth % 8 === 0
+      ? renderPet.image.naturalWidth / 8
+      : renderPet.pet.frameWidth;
+  const sourceFrameHeight =
+    renderPet.image.naturalHeight % 9 === 0
+      ? renderPet.image.naturalHeight / 9
+      : renderPet.pet.frameHeight;
+  const width = 140;
+  const height = (sourceFrameHeight / sourceFrameWidth) * 96 + 120;
+  const isoPosition = logicalPointToIsoPoint(assets, renderPet.position);
+
+  return {
+    x: isoPosition.x - width / 2,
+    y: isoPosition.y - height,
+    width,
+    height: height + 70,
+  };
 }
 
 function computeCamera(
@@ -478,6 +529,13 @@ export function CanvasRoom({
       }
 
       const camera = computeCamera(logicalPointToIsoPoint(assets, position), viewport, isoWorldBounds(assets));
+      const viewRect = {
+        x: camera.x,
+        y: camera.y,
+        width: viewport.width,
+        height: viewport.height,
+      };
+      const petCullRect = paddedViewRect(viewRect, petCullPadding);
 
       context.save();
       context.translate(-camera.x, -camera.y);
@@ -530,8 +588,12 @@ export function CanvasRoom({
           };
         })
         .filter((remotePlayer): remotePlayer is NonNullable<typeof remotePlayer> => Boolean(remotePlayer));
+      const visibleRemotePlayers = remotePlayers.filter((remotePlayer) =>
+        rectsIntersect(renderPetBounds(assets, remotePlayer), petCullRect),
+      );
+      const visiblePlayers = [...visibleRemotePlayers, ...(player ? [player] : [])];
 
-      hitAreasRef.current = [...remotePlayers, ...(player ? [player] : [])].map((renderPet) => {
+      hitAreasRef.current = visiblePlayers.map((renderPet) => {
         const sourceFrameWidth =
           renderPet.image.naturalWidth % 8 === 0
             ? renderPet.image.naturalWidth / 8
@@ -556,9 +618,9 @@ export function CanvasRoom({
         };
       });
 
-      drawPixelOfficeEntities(context, assets, player, remotePlayers, pathRef.current, time, showDebug);
+      drawPixelOfficeEntities(context, assets, player, visibleRemotePlayers, pathRef.current, viewRect, time, showDebug);
 
-      for (const renderPet of [...remotePlayers, ...(player ? [player] : [])]) {
+      for (const renderPet of visiblePlayers) {
         const inboxId = renderPet.pet.xmtpInboxId;
         const bubble = inboxId ? chatBubblesRef.current[inboxId] : undefined;
 
