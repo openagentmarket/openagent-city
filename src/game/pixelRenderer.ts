@@ -38,6 +38,7 @@ export type IsoViewRect = {
 const officeGuests: GuestPet[] = [];
 const entityCullPadding = 260;
 const backgroundChunkSize = 1024;
+const backgroundChunkBleed = 96;
 const backgroundChunkPadding = 160;
 const maxBackgroundChunksPerMap = 36;
 
@@ -666,9 +667,20 @@ function createPixelOfficeBackgroundChunk(assets: PixelOfficeAssets, col: number
     return null;
   }
 
+  const bounds = isoWorldBounds(assets);
+  const renderBounds = {
+    x: Math.max(bounds.minX, chunkBounds.x - backgroundChunkBleed),
+    y: Math.max(bounds.minY, chunkBounds.y - backgroundChunkBleed),
+    width:
+      Math.min(bounds.maxX, chunkBounds.x + chunkBounds.width + backgroundChunkBleed) -
+      Math.max(bounds.minX, chunkBounds.x - backgroundChunkBleed),
+    height:
+      Math.min(bounds.maxY, chunkBounds.y + chunkBounds.height + backgroundChunkBleed) -
+      Math.max(bounds.minY, chunkBounds.y - backgroundChunkBleed),
+  };
   const canvas = document.createElement("canvas");
-  canvas.width = Math.ceil(chunkBounds.width);
-  canvas.height = Math.ceil(chunkBounds.height);
+  canvas.width = Math.ceil(renderBounds.width);
+  canvas.height = Math.ceil(renderBounds.height);
 
   const context = canvas.getContext("2d");
 
@@ -677,12 +689,12 @@ function createPixelOfficeBackgroundChunk(assets: PixelOfficeAssets, col: number
   }
 
   context.imageSmoothingEnabled = false;
-  context.translate(-chunkBounds.x, -chunkBounds.y);
+  context.translate(-renderBounds.x, -renderBounds.y);
   drawFloor(context, assets, 0);
 
   return {
     canvas,
-    ...chunkBounds,
+    ...renderBounds,
     lastUsed: backgroundCacheTick,
   };
 }
