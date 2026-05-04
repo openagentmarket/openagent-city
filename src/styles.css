@@ -56,10 +56,13 @@ textarea {
   display: block;
   width: 100vw;
   height: 100dvh;
-  cursor: pointer;
   image-rendering: pixelated;
   touch-action: none;
   user-select: none;
+}
+
+.room-canvas.is-walkable {
+  cursor: pointer;
 }
 
 .onboarding-card {
@@ -75,6 +78,16 @@ textarea {
   box-shadow: 0 20px 60px rgba(0, 0, 0, 0.34);
   padding: 18px;
   backdrop-filter: blur(14px);
+}
+
+.onboarding-close {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+}
+
+.gate-card {
+  padding-right: 54px;
 }
 
 .onboarding-card h1,
@@ -212,12 +225,18 @@ textarea {
   border: 0;
   background: #fff8ee;
   color: #191714;
+  padding: 11px 14px 13px;
   font-weight: 950;
+  line-height: 1.12;
 }
 
 .primary-action:disabled {
   cursor: wait;
   opacity: 0.72;
+}
+
+.gate-card .primary-action {
+  margin-top: 8px;
 }
 
 .pet-inspector {
@@ -430,7 +449,8 @@ textarea {
 
 .floating-upload,
 .floating-error,
-.github-link {
+.github-link,
+.loading-status-badge {
   position: fixed;
   z-index: 5;
   border: 2px solid rgba(255, 248, 238, 0.68);
@@ -439,6 +459,26 @@ textarea {
   color: #fff8ee;
   box-shadow: 0 14px 32px rgba(0, 0, 0, 0.28);
   backdrop-filter: blur(12px);
+}
+
+.loading-status-badge {
+  left: 18px;
+  bottom: 64px;
+  display: grid;
+  gap: 3px;
+  max-width: min(260px, calc(100vw - 36px));
+  border-width: 1px;
+  padding: 7px 9px;
+  color: rgba(255, 248, 238, 0.78);
+  font-size: 0.68rem;
+  font-weight: 900;
+  line-height: 1.25;
+  text-transform: uppercase;
+}
+
+.loading-status-badge span {
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .city-chat {

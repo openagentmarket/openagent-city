@@ -11,7 +11,7 @@ import {
   setDoc,
   where,
 } from "firebase/firestore";
-import { CanvasRoom, CanvasPetPayload } from "./CanvasRoom";
+import { CanvasRoom, CanvasPetPayload, RoomPetLoadProgress } from "./CanvasRoom";
 import { auth, db } from "./firebase";
 import {
   defaultPetAnimationState,
@@ -399,7 +399,13 @@ export default function App() {
   const [hasEnteredCity, setHasEnteredCity] = useState(initialOnboarding.hasEnteredCity);
   const [isPetReady, setIsPetReady] = useState(false);
   const [isNewPetOnboarding, setIsNewPetOnboarding] = useState(false);
+  const [isGateCardDismissed, setIsGateCardDismissed] = useState(false);
   const [roomPets, setRoomPets] = useState<RoomParticipant[]>([]);
+  const [hasLoadedRoomPets, setHasLoadedRoomPets] = useState(false);
+  const [roomPetLoadProgress, setRoomPetLoadProgress] = useState<RoomPetLoadProgress>({
+    loaded: 0,
+    total: 0,
+  });
   const [selectedPet, setSelectedPet] = useState<CanvasPetPayload | null>(null);
   const [roomXmtpGroupId, setRoomXmtpGroupId] = useState<string | null>(null);
   const [xmtpStatus, setXmtpStatus] = useState<CityXmtpStatus>("idle");
@@ -765,9 +771,12 @@ export default function App() {
   useEffect(() => {
     if (!user) {
       setRoomPets([]);
+      setHasLoadedRoomPets(false);
+      setRoomPetLoadProgress({ loaded: 0, total: 0 });
       return;
     }
 
+    setHasLoadedRoomPets(false);
     const unsubscribe = onSnapshot(
       collection(db, "rooms", defaultRoomId, "participants"),
       (snapshot) => {
@@ -794,8 +803,10 @@ export default function App() {
               };
             }),
         );
+        setHasLoadedRoomPets(true);
       },
       () => {
+        setHasLoadedRoomPets(true);
         setError("Could not load pets in Codex City.");
       },
     );
@@ -1103,6 +1114,10 @@ export default function App() {
     setIsPetReady(ready);
   }, []);
 
+  const handleRoomPetLoadProgress = useCallback((progress: RoomPetLoadProgress) => {
+    setRoomPetLoadProgress(progress);
+  }, []);
+
   const handlePetClick = useCallback((clickedPet: CanvasPetPayload) => {
     setSelectedPet(clickedPet);
   }, []);
@@ -1141,15 +1156,39 @@ export default function App() {
 
   const isRestoringPet = saveStatus === "signing-in" || (!!user && !hasLoadedSavedPets);
   const currentPetPresenceKey = petPayload ? petPresenceKey(petPayload) : "";
-  const renderableRoomPets = roomPets.filter((roomPet) => roomPet.imageUrl);
-  const otherRoomPets = dedupeRoomPetsByAsset(
-    renderableRoomPets.filter(
-      (roomPet) => roomPet.uid !== user?.uid && petPresenceKey(roomPet) !== currentPetPresenceKey,
-    ),
+  const renderableRoomPets = useMemo(
+    () => roomPets.filter((roomPet) => roomPet.imageUrl),
+    [roomPets],
   );
-  const dedupedResidentCount = dedupeRoomPetsByAsset(renderableRoomPets).length;
+  const otherRoomPets = useMemo(
+    () =>
+      dedupeRoomPetsByAsset(
+        renderableRoomPets.filter(
+          (roomPet) =>
+            roomPet.uid !== user?.uid && petPresenceKey(roomPet) !== currentPetPresenceKey,
+        ),
+      ),
+    [currentPetPresenceKey, renderableRoomPets, user?.uid],
+  );
+  const dedupedResidentCount = useMemo(
+    () => dedupeRoomPetsByAsset(renderableRoomPets).length,
+    [renderableRoomPets],
+  );
   const residentCount = Math.max(dedupedResidentCount, hasEnteredCity && petPayload ? 1 : 0);
   const canvasPet = petPayload;
+  const roomPetProgressTotal = Math.max(roomPetLoadProgress.total, otherRoomPets.length);
+  const roomPetProgressLoaded = Math.min(roomPetLoadProgress.loaded, roomPetProgressTotal);
+  const roomPetStatusLabel = !hasLoadedRoomPets
+    ? "Loading city pets..."
+    : roomPetProgressTotal
+      ? `${roomPetProgressLoaded}/${roomPetProgressTotal} city pets loaded`
+      : "No city pets online yet";
+  const savedPetStatusLabel = !user
+    ? "Preparing session..."
+    : !hasLoadedSavedPets
+      ? "Checking saved pets..."
+      : `${savedPets.length} saved pet${savedPets.length === 1 ? "" : "s"} found`;
+  const shouldShowLoadingStatus = isRestoringPet || !petPayload || !isPetReady;
   const chatBubbles = useMemo(() => {
     if (!enableXmtpCityChat) {
       return {};
@@ -1269,6 +1308,7 @@ export default function App() {
         otherPets={otherRoomPets}
         chatBubbles={chatBubbles}
         onPetReadyChange={handlePetReadyChange}
+        onRoomPetLoadProgress={handleRoomPetLoadProgress}
         onPetClick={handlePetClick}
       />
       {selectedPet ? (
@@ -1320,8 +1360,16 @@ export default function App() {
             <span />
           </div>
         </section>
-      ) : !petPayload ? (
+      ) : !petPayload && !isGateCardDismissed ? (
         <section className="onboarding-card gate-card">
+          <button
+            className="icon-action onboarding-close"
+            type="button"
+            aria-label="Close upload panel"
+            onClick={() => setIsGateCardDismissed(true)}
+          >
+            x
+          </button>
           <p className="eyebrow">OpenAgent City</p>
           <h1>Bring your pet into the city</h1>
           <p>
@@ -1336,7 +1384,7 @@ export default function App() {
             {!user ? "Preparing..." : "Upload pet folder"}
           </button>
         </section>
-      ) : !isPetReady ? (
+      ) : petPayload && !isPetReady ? (
         <section className="onboarding-card loading-card">
           <p className="eyebrow">OpenAgent City</p>
           <h1>Loading {petPayload.name}</h1>
@@ -1345,7 +1393,7 @@ export default function App() {
             <span />
           </div>
         </section>
-      ) : !hasEnteredCity ? (
+      ) : petPayload && !hasEnteredCity ? (
         <section className="onboarding-card identity-card">
           <p className="eyebrow">City Pass</p>
           <h1>{identityName || petName}</h1>
@@ -1407,7 +1455,7 @@ export default function App() {
             Enter {defaultRoomName}
           </button>
         </section>
-      ) : (
+      ) : petPayload ? (
         <section className="room-panel">
           <p className="room-badge">
             {defaultRoomName} · {residentCount} resident{residentCount === 1 ? "" : "s"}
@@ -1449,7 +1497,15 @@ export default function App() {
             </div>
           </div>
         </section>
-      )}
+      ) : null}
+      {shouldShowLoadingStatus ? (
+        <div className="loading-status-badge" aria-live="polite">
+          <span>
+            {petPayload && !isPetReady ? "Loading your pet sprite..." : savedPetStatusLabel}
+          </span>
+          <span>{roomPetStatusLabel}</span>
+        </div>
+      ) : null}
       {enableXmtpCityChat && hasEnteredCity && petPayload ? (
         <section className="city-chat" aria-label="City XMTP chat">
           <div className="city-chat-header">

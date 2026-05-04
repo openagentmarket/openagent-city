@@ -30,6 +30,10 @@ export type CanvasPetPayload = {
   githubProfileUrl?: string;
   sourceUrl?: string;
 };
+export type RoomPetLoadProgress = {
+  loaded: number;
+  total: number;
+};
 
 type PlayerState = "idle" | "walk";
 type Viewport = {
@@ -301,6 +305,7 @@ export function CanvasRoom({
   chatBubbles = {},
   showDebug = false,
   onPetReadyChange,
+  onRoomPetLoadProgress,
   onPetClick,
 }: {
   pet: CanvasPetPayload | null;
@@ -308,6 +313,7 @@ export function CanvasRoom({
   chatBubbles?: Record<string, string>;
   showDebug?: boolean;
   onPetReadyChange?: (isReady: boolean) => void;
+  onRoomPetLoadProgress?: (progress: RoomPetLoadProgress) => void;
   onPetClick?: (pet: CanvasPetPayload) => void;
 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -352,6 +358,20 @@ export function CanvasRoom({
 
   useEffect(() => {
     otherPetsRef.current = otherPets;
+    let isCurrent = true;
+
+    const reportProgress = () => {
+      if (!isCurrent) {
+        return;
+      }
+
+      onRoomPetLoadProgress?.({
+        loaded: otherPets.filter((otherPet) => otherImagesRef.current.has(petLayoutKey(otherPet))).length,
+        total: otherPets.length,
+      });
+    };
+
+    reportProgress();
 
     for (const otherPet of otherPets) {
       const key = petLayoutKey(otherPet);
@@ -361,10 +381,19 @@ export function CanvasRoom({
       }
 
       void loadCachedImage(otherPet.imageUrl).then((image) => {
+        if (!isCurrent) {
+          return;
+        }
+
         otherImagesRef.current.set(key, image);
+        reportProgress();
       });
     }
-  }, [otherPets]);
+
+    return () => {
+      isCurrent = false;
+    };
+  }, [onRoomPetLoadProgress, otherPets]);
 
   useEffect(() => {
     chatBubblesRef.current = chatBubbles;
@@ -557,7 +586,7 @@ export function CanvasRoom({
       }
 
       if (!player) {
-        drawPixelEmptyMarker(context, logicalPointToIsoPoint(assets, pixelSpawn(assets)));
+        drawPixelEmptyMarker(context, logicalPointToIsoPoint(assets, position));
       }
 
       drawPixelCredit(context, assets);
@@ -581,7 +610,7 @@ export function CanvasRoom({
 
     const assets = assetsRef.current;
 
-    if (!petRef.current || !assets) {
+    if (!assets) {
       return;
     }
 
@@ -614,9 +643,14 @@ export function CanvasRoom({
     }
 
     const target = isoPointToLogicalPoint(assets, targetIso);
-
     pathRef.current = findPixelPath(assets, positionRef.current, target);
   }
 
-  return <canvas ref={canvasRef} className="room-canvas" onPointerDown={handlePointerDown} />;
+  return (
+    <canvas
+      ref={canvasRef}
+      className="room-canvas is-walkable"
+      onPointerDown={handlePointerDown}
+    />
+  );
 }
