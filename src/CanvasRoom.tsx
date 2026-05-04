@@ -17,6 +17,7 @@ export type CanvasPetPayload = {
   imageUrl: string;
   name: string;
   status?: string;
+  xmtpInboxId?: string;
   animationState: PetAnimationState;
   frameWidth: number;
   frameHeight: number;
@@ -25,6 +26,9 @@ export type CanvasPetPayload = {
   description?: string;
   publicImageUrl?: string;
   packageUrl?: string;
+  githubOwner?: string;
+  githubProfileUrl?: string;
+  sourceUrl?: string;
 };
 
 type PlayerState = "idle" | "walk";
@@ -171,6 +175,83 @@ function remotePetPosition(assets: PixelOfficeAssets, slotIndex: number, key: st
   });
 }
 
+function roundRect(
+  context: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  width: number,
+  height: number,
+  radius: number,
+) {
+  const resolvedRadius = Math.min(radius, width / 2, height / 2);
+  context.beginPath();
+  context.moveTo(x + resolvedRadius, y);
+  context.arcTo(x + width, y, x + width, y + height, resolvedRadius);
+  context.arcTo(x + width, y + height, x, y + height, resolvedRadius);
+  context.arcTo(x, y + height, x, y, resolvedRadius);
+  context.arcTo(x, y, x + width, y, resolvedRadius);
+  context.closePath();
+}
+
+function drawPetBubble(
+  context: CanvasRenderingContext2D,
+  text: string,
+  isoPosition: Point,
+  petHeight: number,
+) {
+  const maxWidth = 220;
+  const paddingX = 10;
+  const paddingY = 7;
+  const label = text.length > 84 ? `${text.slice(0, 81)}...` : text;
+
+  context.save();
+  context.font = "900 13px ui-rounded, SF Pro Rounded, Avenir Next, sans-serif";
+  context.textBaseline = "middle";
+
+  const words = label.split(/\s+/).filter(Boolean);
+  const lines: string[] = [];
+  let currentLine = "";
+
+  for (const word of words) {
+    const nextLine = currentLine ? `${currentLine} ${word}` : word;
+
+    if (context.measureText(nextLine).width <= maxWidth - paddingX * 2 || !currentLine) {
+      currentLine = nextLine;
+    } else {
+      lines.push(currentLine);
+      currentLine = word;
+    }
+  }
+
+  if (currentLine) {
+    lines.push(currentLine);
+  }
+
+  const visibleLines = lines.slice(0, 3);
+  const lineHeight = 16;
+  const bubbleWidth =
+    Math.min(
+      maxWidth,
+      Math.max(58, ...visibleLines.map((line) => context.measureText(line).width + paddingX * 2)),
+    );
+  const bubbleHeight = paddingY * 2 + visibleLines.length * lineHeight;
+  const x = isoPosition.x - bubbleWidth / 2;
+  const y = isoPosition.y - petHeight - bubbleHeight - 18;
+
+  roundRect(context, x, y, bubbleWidth, bubbleHeight, 8);
+  context.fillStyle = "rgba(255, 248, 238, 0.94)";
+  context.fill();
+  context.strokeStyle = "rgba(25, 23, 20, 0.58)";
+  context.lineWidth = 2;
+  context.stroke();
+
+  context.fillStyle = "#241f1a";
+  visibleLines.forEach((line, index) => {
+    context.fillText(line, x + paddingX, y + paddingY + lineHeight * index + lineHeight / 2);
+  });
+  context.restore();
+}
+
 function computeCamera(
   position: Point,
   viewport: Viewport,
@@ -217,12 +298,14 @@ function resizeCanvas(canvas: HTMLCanvasElement): Viewport {
 export function CanvasRoom({
   pet,
   otherPets = [],
+  chatBubbles = {},
   showDebug = false,
   onPetReadyChange,
   onPetClick,
 }: {
   pet: CanvasPetPayload | null;
   otherPets?: CanvasPetPayload[];
+  chatBubbles?: Record<string, string>;
   showDebug?: boolean;
   onPetReadyChange?: (isReady: boolean) => void;
   onPetClick?: (pet: CanvasPetPayload) => void;
@@ -231,6 +314,7 @@ export function CanvasRoom({
   const assetsRef = useRef<PixelOfficeAssets | null>(null);
   const petRef = useRef(pet);
   const otherPetsRef = useRef(otherPets);
+  const chatBubblesRef = useRef(chatBubbles);
   const imageRef = useRef<HTMLImageElement | null>(null);
   const otherImagesRef = useRef<Map<string, HTMLImageElement>>(new Map());
   const positionRef = useRef<Point>({ x: 336, y: 560 });
@@ -281,6 +365,10 @@ export function CanvasRoom({
       });
     }
   }, [otherPets]);
+
+  useEffect(() => {
+    chatBubblesRef.current = chatBubbles;
+  }, [chatBubbles]);
 
   useEffect(() => {
     imageRef.current = null;
@@ -446,6 +534,27 @@ export function CanvasRoom({
       });
 
       drawPixelOfficeEntities(context, assets, player, remotePlayers, pathRef.current, time, showDebug);
+
+      for (const renderPet of [...remotePlayers, ...(player ? [player] : [])]) {
+        const inboxId = renderPet.pet.xmtpInboxId;
+        const bubble = inboxId ? chatBubblesRef.current[inboxId] : undefined;
+
+        if (!bubble) {
+          continue;
+        }
+
+        const sourceFrameWidth =
+          renderPet.image.naturalWidth % 8 === 0
+            ? renderPet.image.naturalWidth / 8
+            : renderPet.pet.frameWidth;
+        const sourceFrameHeight =
+          renderPet.image.naturalHeight % 9 === 0
+            ? renderPet.image.naturalHeight / 9
+            : renderPet.pet.frameHeight;
+        const petHeight = (sourceFrameHeight / sourceFrameWidth) * 96;
+
+        drawPetBubble(context, bubble, logicalPointToIsoPoint(assets, renderPet.position), petHeight);
+      }
 
       if (!player) {
         drawPixelEmptyMarker(context, logicalPointToIsoPoint(assets, pixelSpawn(assets)));

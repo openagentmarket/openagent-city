@@ -11,34 +11,23 @@ service cloud.firestore {
         "name",
         "visibility",
         "createdByUid",
+        "xmtpGroupId",
         "updatedAt"
       ])
       && request.resource.data.name == "Codex City"
       && request.resource.data.visibility == "public"
-      && request.resource.data.createdByUid is string;
+      && request.resource.data.createdByUid is string
+      && (!request.resource.data.keys().hasAny(["xmtpGroupId"]) || request.resource.data.xmtpGroupId is string);
     }
 
     function isParticipantData(uid) {
-      return request.resource.data.keys().hasOnly([
-        "ownerUid",
-        "petId",
-        "displayName",
-        "description",
-        "status",
-        "animationState",
-        "assetHash",
-        "spritesheetUrl",
-        "packageUrl",
-        "frameWidth",
-        "frameHeight",
-        "joinedAt",
-        "updatedAt"
-      ])
-      && request.resource.data.ownerUid == uid
+      return request.resource.data.ownerUid == uid
       && request.resource.data.petId is string
       && request.resource.data.displayName is string
       && request.resource.data.description is string
       && (!request.resource.data.keys().hasAny(["status"]) || request.resource.data.status is string)
+      && (!request.resource.data.keys().hasAny(["xmtpInboxId"]) || request.resource.data.xmtpInboxId is string)
+      && (!request.resource.data.keys().hasAny(["xmtpAddress"]) || request.resource.data.xmtpAddress is string)
       && (!request.resource.data.keys().hasAny(["animationState"]) || request.resource.data.animationState is string)
       && (!request.resource.data.keys().hasAny(["assetHash"]) || request.resource.data.assetHash is string)
       && request.resource.data.spritesheetUrl is string
@@ -131,5 +120,6 @@ service cloud.firestore {
         && request.auth.uid == uid
         && resource.data.ownerUid == request.auth.uid;
     }
+
   }
 }

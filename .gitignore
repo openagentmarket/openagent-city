@@ -14,3 +14,4 @@ vite.config.d.ts
 AGENTS.md
 .openagent/share pets.md
 .openagent/openagent-city.canvas
+scripts/import-gitpets.mjs

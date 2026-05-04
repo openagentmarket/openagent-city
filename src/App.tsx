@@ -1,7 +1,8 @@
-import { ChangeEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { ChangeEvent, FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { onAuthStateChanged, signInAnonymously, User } from "firebase/auth";
 import {
   collection,
+  deleteField,
   doc,
   getDoc,
   onSnapshot,
@@ -22,6 +23,13 @@ import {
 } from "./petAnimation";
 import { getFilePath, PetJson, savePetDraft, SavedPet } from "./petStorage";
 import { loadCachedImage } from "./imageCache";
+import {
+  CityXmtpMessage,
+  createCityXmtpClient,
+  loadOrCreateCityGroup,
+  toCityXmtpMessage,
+  upsertCityXmtpMessage,
+} from "./xmtp/cityXmtp";
 
 type LoadedPet = {
   folderName: string;
@@ -48,6 +56,20 @@ type RoomParticipant = CanvasPetPayload & {
   description: string;
   assetHash?: string;
 };
+type CityXmtpStatus = "idle" | "connecting" | "ready" | "waiting" | "error";
+type CityChatDebug = {
+  addAttempts: number;
+  joinAttempts: number;
+  lastAddMembersAt?: string;
+  lastAddMembersError?: string;
+  lastJoinRetryAt?: string;
+  lastJoinRetryError?: string;
+  lastStreamMessageAt?: string;
+  lastHistoryLoadAt?: string;
+  lastHistoryLoadError?: string;
+  rawHistoryCount: number;
+  streamState: "idle" | "starting" | "open" | "error";
+};
 
 const petStatePreviewOptions: { value: PetSpritesheetState; label: string }[] = [
   { value: "idle", label: "Idle" },
@@ -67,6 +89,15 @@ const defaultRoomName = "Codex City";
 const roomUpdateError = "Could not update Codex City. Check Firestore room rules.";
 const roomJoinError = "Could not join Codex City. Check Firestore room rules.";
 const petStatusError = "Could not save pet status. Check Firestore pet rules.";
+// XMTP city chat is intentionally paused. Flip this back on when we resume the XMTP work.
+const enableXmtpCityChat = false;
+const xmtpRoomError = "Could not start XMTP chat for Codex City.";
+const defaultCityChatDebug: CityChatDebug = {
+  addAttempts: 0,
+  joinAttempts: 0,
+  rawHistoryCount: 0,
+  streamState: "idle",
+};
 
 const imageExtensions = [".png", ".webp", ".gif", ".jpg", ".jpeg"];
 
@@ -100,6 +131,10 @@ function readOnboardingState(): OnboardingState {
 
 function normalizePublicStatus(value: string) {
   return value.trim().replace(/\s+/g, " ").slice(0, 64);
+}
+
+function isXmtpInboxId(value?: string) {
+  return Boolean(value && /^[a-f0-9]{64}$/i.test(value));
 }
 
 function findImageFile(files: File[], petJson?: PetJson) {
@@ -366,6 +401,20 @@ export default function App() {
   const [isNewPetOnboarding, setIsNewPetOnboarding] = useState(false);
   const [roomPets, setRoomPets] = useState<RoomParticipant[]>([]);
   const [selectedPet, setSelectedPet] = useState<CanvasPetPayload | null>(null);
+  const [roomXmtpGroupId, setRoomXmtpGroupId] = useState<string | null>(null);
+  const [xmtpStatus, setXmtpStatus] = useState<CityXmtpStatus>("idle");
+  const [xmtpInboxId, setXmtpInboxId] = useState("");
+  const [xmtpAddress, setXmtpAddress] = useState("");
+  const [xmtpMessages, setXmtpMessages] = useState<CityXmtpMessage[]>([]);
+  const [chatText, setChatText] = useState("");
+  const [isSendingChat, setIsSendingChat] = useState(false);
+  const [cityChatDebug, setCityChatDebug] = useState<CityChatDebug>(defaultCityChatDebug);
+  const [cityChatResetNonce, setCityChatResetNonce] = useState(0);
+  const roomXmtpGroupIdRef = useRef<string | null>(null);
+  const xmtpClientRef = useRef<Awaited<ReturnType<typeof createCityXmtpClient>>["client"] | null>(
+    null,
+  );
+  const xmtpGroupRef = useRef<Awaited<ReturnType<typeof loadOrCreateCityGroup>> | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -572,6 +621,7 @@ export default function App() {
         imageUrl: loadedPet.imageUrl,
         name: identityName || petName,
         status: normalizePublicStatus(publicStatus),
+        xmtpInboxId,
         animationState,
         frameWidth: loadedPet.frameWidth,
         frameHeight: loadedPet.frameHeight,
@@ -588,6 +638,7 @@ export default function App() {
         imageUrl: savedPets[0].spritesheetUrl,
         name: identityName || savedPets[0].displayName,
         status: normalizePublicStatus(publicStatus || savedPets[0].publicStatus || ""),
+        xmtpInboxId,
         animationState,
         frameWidth: savedPets[0].frameWidth,
         frameHeight: savedPets[0].frameHeight,
@@ -600,7 +651,7 @@ export default function App() {
     }
 
     return null;
-  }, [animationState, identityBio, identityName, loadedPet, petName, publicStatus, savedPets]);
+  }, [animationState, identityBio, identityName, loadedPet, petName, publicStatus, savedPets, xmtpInboxId]);
 
   useEffect(() => {
     if (!user || !petPayload?.petId) {
@@ -666,6 +717,7 @@ export default function App() {
           displayName: petPayload.name,
           description: petPayload.description ?? "",
           status: petPayload.status ?? "",
+          ...(enableXmtpCityChat ? { xmtpInboxId, xmtpAddress } : {}),
           animationState: petPayload.animationState,
           ...(petPayload.assetHash ? { assetHash: petPayload.assetHash } : {}),
           spritesheetUrl: petPayload.publicImageUrl,
@@ -685,7 +737,30 @@ export default function App() {
         console.error("Codex City participant join failed", caughtError);
         setError(roomJoinError);
       });
-  }, [hasEnteredCity, petPayload, user]);
+  }, [hasEnteredCity, petPayload, user, xmtpAddress, xmtpInboxId]);
+
+  useEffect(() => {
+    if (!enableXmtpCityChat) {
+      setRoomXmtpGroupId("");
+      return;
+    }
+
+    if (!user) {
+      setRoomXmtpGroupId(null);
+      return;
+    }
+
+    const unsubscribe = onSnapshot(doc(db, "rooms", defaultRoomId), (roomSnapshot) => {
+      const data = roomSnapshot.data();
+      setRoomXmtpGroupId(String(data?.xmtpGroupId ?? ""));
+    });
+
+    return unsubscribe;
+  }, [user]);
+
+  useEffect(() => {
+    roomXmtpGroupIdRef.current = roomXmtpGroupId;
+  }, [roomXmtpGroupId]);
 
   useEffect(() => {
     if (!user) {
@@ -706,10 +781,14 @@ export default function App() {
                 name: String(data.displayName ?? "pet"),
                 description: String(data.description ?? ""),
                 status: String(data.status ?? ""),
+                xmtpInboxId: String(data.xmtpInboxId ?? ""),
                 animationState: normalizePetAnimationState(data.animationState),
                 assetHash: String(data.assetHash ?? ""),
                 imageUrl: String(data.spritesheetUrl ?? ""),
                 packageUrl: String(data.packageUrl ?? ""),
+                githubOwner: String(data.githubOwner ?? ""),
+                githubProfileUrl: String(data.githubProfileUrl ?? ""),
+                sourceUrl: String(data.sourceUrl ?? ""),
                 frameWidth: Number(data.frameWidth ?? 128),
                 frameHeight: Number(data.frameHeight ?? 128),
               };
@@ -723,6 +802,296 @@ export default function App() {
 
     return unsubscribe;
   }, [user]);
+
+  const hasLoadedRoomXmtpGroup = roomXmtpGroupId !== null;
+
+  useEffect(() => {
+    if (!enableXmtpCityChat || !user || !hasEnteredCity || !petPayload) {
+      xmtpClientRef.current?.close();
+      xmtpClientRef.current = null;
+      xmtpGroupRef.current = null;
+      setXmtpStatus("idle");
+      setXmtpInboxId("");
+      setXmtpAddress("");
+      setXmtpMessages([]);
+      setCityChatDebug(defaultCityChatDebug);
+      return;
+    }
+
+    if (!hasLoadedRoomXmtpGroup) {
+      return;
+    }
+
+    let isCurrent = true;
+    let retryTimer = 0;
+    let stream: { end: () => Promise<unknown> } | null = null;
+
+    const start = async () => {
+      setXmtpStatus("connecting");
+
+      try {
+        const { address, client, inboxId } = await createCityXmtpClient();
+
+        if (!isCurrent) {
+          return;
+        }
+
+        xmtpClientRef.current = client;
+        setXmtpInboxId(inboxId);
+        setXmtpAddress(address);
+
+        const group = await loadOrCreateCityGroup({
+          client,
+          existingGroupId:
+            cityChatResetNonce > 0 ? undefined : roomXmtpGroupIdRef.current || undefined,
+          roomName: defaultRoomName,
+        });
+
+        if (!isCurrent) {
+          return;
+        }
+
+        xmtpGroupRef.current = group;
+        setXmtpStatus("ready");
+        setError((current) => (current === xmtpRoomError ? null : current));
+
+        if (!roomXmtpGroupIdRef.current || roomXmtpGroupIdRef.current !== group.id) {
+          await setDoc(
+            doc(db, "rooms", defaultRoomId),
+            {
+              name: defaultRoomName,
+              xmtpGroupId: group.id,
+              updatedAt: serverTimestamp(),
+            },
+            { merge: true },
+          );
+        }
+
+        await client.conversations.syncAll();
+        await group.sync();
+        const existingMessages = await group.messages({ limit: 100n });
+        setCityChatDebug((current) => ({
+          ...current,
+          lastHistoryLoadAt: new Date().toLocaleTimeString(),
+          lastHistoryLoadError: undefined,
+          rawHistoryCount: existingMessages.length,
+        }));
+        setXmtpMessages(
+          existingMessages
+            .map(toCityXmtpMessage)
+            .filter((message): message is CityXmtpMessage => Boolean(message)),
+        );
+
+        setCityChatDebug((current) => ({ ...current, streamState: "starting" }));
+        stream = await group.stream({
+          onValue: (message) => {
+            const cityMessage = toCityXmtpMessage(message);
+
+            if (cityMessage) {
+              setCityChatDebug((current) => ({
+                ...current,
+                lastStreamMessageAt: new Date().toLocaleTimeString(),
+                streamState: "open",
+              }));
+              setXmtpMessages((current) => upsertCityXmtpMessage(current, cityMessage));
+            }
+          },
+          onError: () => {
+            setCityChatDebug((current) => ({ ...current, streamState: "error" }));
+            setXmtpStatus("error");
+          },
+        });
+        setCityChatDebug((current) => ({ ...current, streamState: "open" }));
+      } catch (caughtError) {
+        console.warn("XMTP city chat failed", caughtError);
+        setCityChatDebug((current) => ({
+          ...current,
+          lastHistoryLoadError:
+            caughtError instanceof Error ? caughtError.message : String(caughtError),
+        }));
+
+        if (!isCurrent) {
+          return;
+        }
+
+        if (roomXmtpGroupIdRef.current) {
+          setXmtpStatus("waiting");
+          retryTimer = window.setTimeout(start, 8000);
+        } else {
+          setXmtpStatus("error");
+          setError(xmtpRoomError);
+        }
+      }
+    };
+
+    void start();
+
+    return () => {
+      isCurrent = false;
+      window.clearTimeout(retryTimer);
+      void stream?.end();
+      xmtpGroupRef.current = null;
+    };
+  }, [cityChatResetNonce, hasEnteredCity, hasLoadedRoomXmtpGroup, petPayload?.petId, user]);
+
+  useEffect(() => {
+    if (!enableXmtpCityChat) {
+      return;
+    }
+
+    let isCancelled = false;
+    let inviteTimer = 0;
+
+    const inviteRoomPets = async () => {
+      if (isCancelled) {
+        return;
+      }
+
+      const group = xmtpGroupRef.current;
+
+      if (!group || !xmtpInboxId || xmtpStatus !== "ready") {
+        return;
+      }
+
+      const inboxIds = roomPets
+        .map((roomPet) => roomPet.xmtpInboxId)
+        .filter(
+          (inboxId): inboxId is string =>
+            Boolean(inboxId && inboxId !== xmtpInboxId && isXmtpInboxId(inboxId)),
+        );
+
+      if (!inboxIds.length) {
+        return;
+      }
+
+      try {
+        setCityChatDebug((current) => ({
+          ...current,
+          addAttempts: current.addAttempts + 1,
+          lastAddMembersAt: new Date().toLocaleTimeString(),
+        }));
+        await group.addMembers([...new Set(inboxIds)]);
+      } catch (caughtError) {
+        setCityChatDebug((current) => ({
+          ...current,
+          lastAddMembersError:
+            caughtError instanceof Error ? caughtError.message : String(caughtError),
+        }));
+        console.warn("Could not add XMTP city members", caughtError);
+      }
+    };
+
+    void inviteRoomPets();
+
+    if (xmtpStatus === "ready") {
+      inviteTimer = window.setInterval(() => {
+        void inviteRoomPets();
+      }, 5000);
+    }
+
+    return () => {
+      isCancelled = true;
+      window.clearInterval(inviteTimer);
+    };
+  }, [roomPets, xmtpInboxId, xmtpStatus]);
+
+  useEffect(() => {
+    if (!enableXmtpCityChat) {
+      return;
+    }
+
+    if (xmtpStatus !== "waiting" || !roomXmtpGroupIdRef.current || !xmtpClientRef.current) {
+      return;
+    }
+
+    let isCancelled = false;
+    let retryTimer = 0;
+    let stream: { end: () => Promise<unknown> } | null = null;
+
+    const retryJoin = async () => {
+      const client = xmtpClientRef.current;
+      const groupId = roomXmtpGroupIdRef.current;
+
+      if (!client || !groupId || isCancelled) {
+        return;
+      }
+
+      try {
+        setCityChatDebug((current) => ({
+          ...current,
+          joinAttempts: current.joinAttempts + 1,
+          lastJoinRetryAt: new Date().toLocaleTimeString(),
+        }));
+        const group = await loadOrCreateCityGroup({
+          client,
+          existingGroupId: groupId,
+          roomName: defaultRoomName,
+        });
+
+        if (isCancelled) {
+          return;
+        }
+
+        xmtpGroupRef.current = group;
+        setXmtpStatus("ready");
+
+        await client.conversations.syncAll();
+        await group.sync();
+        const existingMessages = await group.messages({ limit: 100n });
+        setCityChatDebug((current) => ({
+          ...current,
+          lastHistoryLoadAt: new Date().toLocaleTimeString(),
+          lastHistoryLoadError: undefined,
+          rawHistoryCount: existingMessages.length,
+        }));
+        setXmtpMessages(
+          existingMessages
+            .map(toCityXmtpMessage)
+            .filter((message): message is CityXmtpMessage => Boolean(message)),
+        );
+
+        setCityChatDebug((current) => ({ ...current, streamState: "starting" }));
+        stream = await group.stream({
+          onValue: (message) => {
+            const cityMessage = toCityXmtpMessage(message);
+
+            if (cityMessage) {
+              setCityChatDebug((current) => ({
+                ...current,
+                lastStreamMessageAt: new Date().toLocaleTimeString(),
+                streamState: "open",
+              }));
+              setXmtpMessages((current) => upsertCityXmtpMessage(current, cityMessage));
+            }
+          },
+          onError: () => {
+            setCityChatDebug((current) => ({ ...current, streamState: "error" }));
+            setXmtpStatus("error");
+          },
+        });
+        setCityChatDebug((current) => ({ ...current, streamState: "open" }));
+      } catch (caughtError) {
+        setCityChatDebug((current) => ({
+          ...current,
+          lastHistoryLoadError:
+            caughtError instanceof Error ? caughtError.message : String(caughtError),
+        }));
+        setCityChatDebug((current) => ({
+          ...current,
+          lastJoinRetryError: "Group not available to this inbox yet",
+        }));
+        retryTimer = window.setTimeout(retryJoin, 5000);
+      }
+    };
+
+    retryTimer = window.setTimeout(retryJoin, 1500);
+
+    return () => {
+      isCancelled = true;
+      window.clearTimeout(retryTimer);
+      void stream?.end();
+    };
+  }, [xmtpStatus]);
 
   const petAssetKey = petPayload?.imageUrl ?? "";
 
@@ -781,6 +1150,96 @@ export default function App() {
   const dedupedResidentCount = dedupeRoomPetsByAsset(renderableRoomPets).length;
   const residentCount = Math.max(dedupedResidentCount, hasEnteredCity && petPayload ? 1 : 0);
   const canvasPet = petPayload;
+  const chatBubbles = useMemo(() => {
+    if (!enableXmtpCityChat) {
+      return {};
+    }
+
+    const latestByInbox = new Map<string, CityXmtpMessage>();
+
+    for (const message of xmtpMessages) {
+      latestByInbox.set(message.senderInboxId, message);
+    }
+
+    return Object.fromEntries(
+      [...latestByInbox.entries()]
+        .filter(([, message]) => Date.now() - message.sentAt.getTime() < 15000)
+        .map(([inboxId, message]) => [inboxId, message.text]),
+    );
+  }, [xmtpMessages]);
+  const visibleChatMessages = xmtpMessages
+    .map((message) => ({
+      ...message,
+      senderName: message.senderInboxId === xmtpInboxId ? petPayload?.name ?? "Pet" : "Pet",
+    }))
+    .slice(-6);
+  const roomInboxIds = roomPets
+    .map((roomPet) => roomPet.xmtpInboxId)
+    .filter(isXmtpInboxId);
+  const xmtpStatusLabel =
+    xmtpStatus === "ready"
+      ? "XMTP live"
+      : xmtpStatus === "connecting"
+        ? "Connecting XMTP..."
+        : xmtpStatus === "waiting"
+          ? "Waiting for city invite"
+          : xmtpStatus === "error"
+            ? "XMTP offline"
+            : "XMTP idle";
+
+  async function handleSendChat(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+
+    if (!enableXmtpCityChat) {
+      return;
+    }
+
+    const text = chatText.trim();
+    const group = xmtpGroupRef.current;
+
+    if (!text || !group) {
+      return;
+    }
+
+    setIsSendingChat(true);
+    try {
+      await group.sendText(text);
+      setChatText("");
+    } catch (caughtError) {
+      console.warn("XMTP send failed", caughtError);
+      setError("Could not send XMTP message.");
+    } finally {
+      setIsSendingChat(false);
+    }
+  }
+
+  async function handleResetCityChat() {
+    if (!enableXmtpCityChat || !user) {
+      return;
+    }
+
+    setXmtpStatus("connecting");
+    setXmtpMessages([]);
+    xmtpGroupRef.current = null;
+
+    try {
+      await setDoc(
+        doc(db, "rooms", defaultRoomId),
+        {
+          name: defaultRoomName,
+          xmtpGroupId: deleteField(),
+          updatedAt: serverTimestamp(),
+        },
+        { merge: true },
+      );
+      roomXmtpGroupIdRef.current = "";
+      setRoomXmtpGroupId("");
+      setCityChatResetNonce((current) => current + 1);
+    } catch (caughtError) {
+      console.warn("Could not reset XMTP city group", caughtError);
+      setError("Could not reset XMTP city chat.");
+    }
+  }
 
   const uploadLabel =
     saveStatus === "signing-in"
@@ -808,6 +1267,7 @@ export default function App() {
       <CanvasRoom
         pet={canvasPet}
         otherPets={otherRoomPets}
+        chatBubbles={chatBubbles}
         onPetReadyChange={handlePetReadyChange}
         onPetClick={handlePetClick}
       />
@@ -818,6 +1278,16 @@ export default function App() {
               <p className="eyebrow">Pet states</p>
               <h2>{selectedPet.name}</h2>
               {selectedPet.description ? <p>{selectedPet.description}</p> : null}
+              {selectedPet.githubOwner ? (
+                <a
+                  className="pet-source-link"
+                  href={selectedPet.githubProfileUrl || `https://github.com/${selectedPet.githubOwner}`}
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  by @{selectedPet.githubOwner}
+                </a>
+              ) : null}
             </div>
             <button
               className="icon-action"
@@ -980,6 +1450,77 @@ export default function App() {
           </div>
         </section>
       )}
+      {enableXmtpCityChat && hasEnteredCity && petPayload ? (
+        <section className="city-chat" aria-label="City XMTP chat">
+          <div className="city-chat-header">
+            <strong>{xmtpStatusLabel}</strong>
+            <div>
+              {roomXmtpGroupId ? <span>{roomXmtpGroupId.slice(0, 8)}</span> : null}
+              <button type="button" onClick={handleResetCityChat}>
+                Reset
+              </button>
+            </div>
+          </div>
+          <div className="city-chat-log">
+            {visibleChatMessages.length ? (
+              visibleChatMessages.map((message) => (
+                <p key={message.id} className={message.senderInboxId === xmtpInboxId ? "mine" : ""}>
+                  <span>{message.senderInboxId === xmtpInboxId ? petPayload.name : message.senderName}</span>
+                  {message.text}
+                </p>
+              ))
+            ) : (
+              <p className="city-chat-empty">Say hi to the city.</p>
+            )}
+          </div>
+          <form className="city-chat-form" onSubmit={handleSendChat}>
+            <input
+              maxLength={240}
+              placeholder="Message Codex City"
+              value={chatText}
+              onChange={(event) => setChatText(event.target.value)}
+            />
+            <button type="submit" disabled={xmtpStatus !== "ready" || isSendingChat || !chatText.trim()}>
+              Send
+            </button>
+          </form>
+          <details className="city-chat-debug">
+            <summary>Debug</summary>
+            <dl>
+              <dt>Status</dt>
+              <dd>{xmtpStatus}</dd>
+              <dt>Group</dt>
+              <dd>{roomXmtpGroupId || xmtpGroupRef.current?.id || "none"}</dd>
+              <dt>Inbox</dt>
+              <dd>{xmtpInboxId || "none"}</dd>
+              <dt>Room inboxes</dt>
+              <dd>{roomInboxIds.length ? roomInboxIds.join(", ") : "none"}</dd>
+              <dt>Messages</dt>
+              <dd>{xmtpMessages.length} text / {cityChatDebug.rawHistoryCount} raw</dd>
+              <dt>Stream</dt>
+              <dd>{cityChatDebug.streamState}</dd>
+              <dt>History load</dt>
+              <dd>{cityChatDebug.lastHistoryLoadAt || "none"}</dd>
+              <dt>History error</dt>
+              <dd>{cityChatDebug.lastHistoryLoadError || "none"}</dd>
+              <dt>Add attempts</dt>
+              <dd>{cityChatDebug.addAttempts}</dd>
+              <dt>Join attempts</dt>
+              <dd>{cityChatDebug.joinAttempts}</dd>
+              <dt>Last add</dt>
+              <dd>{cityChatDebug.lastAddMembersAt || "none"}</dd>
+              <dt>Last add error</dt>
+              <dd>{cityChatDebug.lastAddMembersError || "none"}</dd>
+              <dt>Last join</dt>
+              <dd>{cityChatDebug.lastJoinRetryAt || "none"}</dd>
+              <dt>Last join error</dt>
+              <dd>{cityChatDebug.lastJoinRetryError || "none"}</dd>
+              <dt>Last stream message</dt>
+              <dd>{cityChatDebug.lastStreamMessageAt || "none"}</dd>
+            </dl>
+          </details>
+        </section>
+      ) : null}
       <button
         className="floating-upload"
         disabled={saveStatus === "signing-in" || saveStatus === "saving"}
