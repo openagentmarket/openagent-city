@@ -39,6 +39,10 @@ const tilePalette = new Map<number, { fill: string; stroke: string }>([
   [9, { fill: "#747c74", stroke: "#5b625b" }],
   [255, { fill: "#26231f", stroke: "#1a1816" }],
 ]);
+const backgroundCache = new WeakMap<
+  PixelOfficeAssets,
+  { canvas: HTMLCanvasElement; minX: number; minY: number }
+>();
 
 function hash01(col: number, row: number, salt = 0) {
   const value = Math.sin(col * 127.1 + row * 311.7 + salt * 74.7) * 43758.5453123;
@@ -517,8 +521,39 @@ function drawFurniture(
   context.restore();
 }
 
-export function drawPixelOfficeBackground(context: CanvasRenderingContext2D, assets: PixelOfficeAssets, time = 0) {
-  drawFloor(context, assets, time);
+function createPixelOfficeBackgroundCache(assets: PixelOfficeAssets) {
+  const bounds = isoWorldBounds(assets);
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.ceil(bounds.width);
+  canvas.height = Math.ceil(bounds.height);
+
+  const context = canvas.getContext("2d");
+
+  if (!context) {
+    return null;
+  }
+
+  context.imageSmoothingEnabled = false;
+  context.translate(-bounds.minX, -bounds.minY);
+  drawFloor(context, assets, 0);
+
+  return {
+    canvas,
+    minX: bounds.minX,
+    minY: bounds.minY,
+  };
+}
+
+export function drawPixelOfficeBackground(context: CanvasRenderingContext2D, assets: PixelOfficeAssets) {
+  const cached = backgroundCache.get(assets) ?? createPixelOfficeBackgroundCache(assets);
+
+  if (!cached) {
+    drawFloor(context, assets, 0);
+    return;
+  }
+
+  backgroundCache.set(assets, cached);
+  context.drawImage(cached.canvas, cached.minX, cached.minY);
 }
 
 export function drawPixelOfficeEntities(

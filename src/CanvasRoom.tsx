@@ -482,7 +482,7 @@ export function CanvasRoom({
       context.save();
       context.translate(-camera.x, -camera.y);
 
-      drawPixelOfficeBackground(context, assets, time);
+      drawPixelOfficeBackground(context, assets);
 
       const currentPet = petRef.current;
       const currentOtherPets = otherPetsRef.current;
