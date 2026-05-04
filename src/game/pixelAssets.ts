@@ -277,48 +277,56 @@ export function blocksMovement(type: string) {
 }
 
 let pixelOfficeAssetsPromise: Promise<PixelOfficeAssets> | null = null;
+let pixelOfficeAssetWarmupPromise: Promise<void> | null = null;
 
-async function loadPixelOfficeAssetsUncached(): Promise<PixelOfficeAssets> {
-  const [rawLayout, wall, floorImages, manifests] = await Promise.all([
+async function warmPixelOfficeAssetCache() {
+  await Promise.all([
     fetch(`${assetRoot}/default-layout-1.json`).then((response) => response.json() as Promise<PixelOfficeLayout>),
     loadCachedImage(`${assetRoot}/walls/wall_0.png`),
     Promise.all(
-      Array.from({ length: 9 }, async (_, index) => [
-        index,
-        await loadCachedImage(`${assetRoot}/floors/floor_${index}.png`),
-      ] as const),
+      Array.from({ length: 9 }, async (_, index) => {
+        await loadCachedImage(`${assetRoot}/floors/floor_${index}.png`);
+      }),
     ),
     Promise.all(
-      furnitureFolders.map(async (folder) => [
-        folder,
-        await fetch(`${assetRoot}/furniture/${folder}/manifest.json`).then((response) => response.json()),
-      ] as const),
+      furnitureFolders.map(async (folder) => {
+        const manifest = await fetch(`${assetRoot}/furniture/${folder}/manifest.json`).then((response) => response.json());
+        const assetDefinitions = flattenManifest(folder, manifest);
+
+        await Promise.all(
+          assetDefinitions.map((asset) =>
+            loadCachedImage(`${assetRoot}/furniture/${asset.folder}/${asset.file}`),
+          ),
+        );
+      }),
     ),
   ]);
-  void rawLayout;
-  const layout = makeVillageLayout();
+}
 
-  const assetDefinitions = manifests.flatMap(([folder, manifest]) => flattenManifest(folder, manifest));
-  const furnitureEntries = await Promise.all(
-    assetDefinitions.map(async (asset) => [
-      asset.id,
-      {
-        ...asset,
-        image: await loadCachedImage(`${assetRoot}/furniture/${asset.folder}/${asset.file}`),
-      },
-    ] as const),
-  );
+function startPixelOfficeAssetWarmup() {
+  if (!pixelOfficeAssetWarmupPromise) {
+    pixelOfficeAssetWarmupPromise = warmPixelOfficeAssetCache().catch((error) => {
+      pixelOfficeAssetWarmupPromise = null;
+      console.warn("Pixel office asset warmup failed", error);
+    });
+  }
+}
+
+async function loadPixelOfficeAssetsUncached(): Promise<PixelOfficeAssets> {
+  const layout = makeVillageLayout();
+  const placeholderImage = new Image();
+  startPixelOfficeAssetWarmup();
 
   return {
     layout,
-    wall,
+    wall: placeholderImage,
     scale: renderScale,
     tileSize: sourceTileSize * renderScale,
     origin: { x: 360, y: 220 },
     worldWidth: Math.max(1400, 360 * 2 + layout.cols * sourceTileSize * renderScale),
     worldHeight: Math.max(1200, 220 * 2 + layout.rows * sourceTileSize * renderScale),
-    floors: new Map(floorImages),
-    furniture: new Map(furnitureEntries),
+    floors: new Map(),
+    furniture: new Map(),
   };
 }
 

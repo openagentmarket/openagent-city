@@ -8,6 +8,7 @@ import {
   drawPixelLoading,
   drawPixelOfficeBackground,
   drawPixelOfficeEntities,
+  drawPixelPetLoadingMarker,
 } from "./game/pixelRenderer";
 import { Point } from "./game/types";
 import { loadCachedImage } from "./imageCache";
@@ -487,13 +488,6 @@ export function CanvasRoom({
       const currentOtherPets = otherPetsRef.current;
       const image = imageRef.current;
 
-      if (currentPet && !image) {
-        context.restore();
-        drawPixelLoading(context, viewport.width, viewport.height, `Loading ${currentPet.name}`);
-        animationFrame = requestAnimationFrame(render);
-        return;
-      }
-
       const player =
         currentPet && image
           ? {
@@ -586,7 +580,13 @@ export function CanvasRoom({
       }
 
       if (!player) {
-        drawPixelEmptyMarker(context, logicalPointToIsoPoint(assets, position));
+        const markerPosition = logicalPointToIsoPoint(assets, position);
+
+        if (currentPet) {
+          drawPixelPetLoadingMarker(context, markerPosition, currentPet.name);
+        } else {
+          drawPixelEmptyMarker(context, markerPosition);
+        }
       }
 
       drawPixelCredit(context, assets);

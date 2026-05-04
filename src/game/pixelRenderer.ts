@@ -601,6 +601,20 @@ export function drawPixelEmptyMarker(context: CanvasRenderingContext2D, spawn: P
   drawEmptyMarker(context, spawn);
 }
 
+export function drawPixelPetLoadingMarker(context: CanvasRenderingContext2D, spawn: Point, petName: string) {
+  drawTextPill(context, `Loading ${petName}`, spawn.x, spawn.y - 60, {
+    font: "900 14px Avenir Next, sans-serif",
+  });
+  context.save();
+  context.strokeStyle = "rgba(43, 33, 24, 0.58)";
+  context.setLineDash([10, 8]);
+  context.lineWidth = 4;
+  context.beginPath();
+  context.arc(spawn.x, spawn.y + 10, 54, 0, Math.PI * 2);
+  context.stroke();
+  context.restore();
+}
+
 export function drawPixelCollisionOverlay(context: CanvasRenderingContext2D, assets: PixelOfficeAssets) {
   context.save();
   const isoTile = isoTileSize(assets);
