@@ -11,7 +11,13 @@ import {
   setDoc,
   where,
 } from "firebase/firestore";
-import { CanvasRoom, CanvasPetPayload, RoomPetLoadProgress } from "./CanvasRoom";
+import {
+  CanvasRoom,
+  CanvasPetPayload,
+  CommanderCommand,
+  CommanderFormation,
+  RoomPetLoadProgress,
+} from "./CanvasRoom";
 import { auth, db } from "./firebase";
 import {
   defaultPetAnimationState,
@@ -56,6 +62,7 @@ type RoomParticipant = CanvasPetPayload & {
   description: string;
   assetHash?: string;
 };
+type PetRenderLimit = 30 | 50 | 100 | "all";
 type CityXmtpStatus = "idle" | "connecting" | "ready" | "waiting" | "error";
 type CityChatDebug = {
   addAttempts: number;
@@ -81,6 +88,22 @@ const petStatePreviewOptions: { value: PetSpritesheetState; label: string }[] = 
   { value: "waiting", label: "Waiting" },
   { value: "running", label: "Run" },
   { value: "review", label: "Review" },
+];
+const commanderFormationOptions: { value: CommanderFormation; label: string }[] = [
+  { value: "rally", label: "Rally" },
+  { value: "line", label: "Line" },
+  { value: "column", label: "Column" },
+];
+const commanderPoseOptions: { value: PetSpritesheetState; label: string }[] = [
+  ...petAnimationOptions,
+  { value: "running-left", label: "Run left" },
+  { value: "running-right", label: "Run right" },
+];
+const petRenderLimitOptions: { value: PetRenderLimit; label: string }[] = [
+  { value: 30, label: "30 pets" },
+  { value: 50, label: "50 pets" },
+  { value: 100, label: "100 pets" },
+  { value: "all", label: "All pets" },
 ];
 
 const onboardingStorageKey = "openagent-city:onboarding:v1";
@@ -407,6 +430,9 @@ export default function App() {
     total: 0,
   });
   const [selectedPet, setSelectedPet] = useState<CanvasPetPayload | null>(null);
+  const [isCommanderMode, setIsCommanderMode] = useState(false);
+  const [commanderCommand, setCommanderCommand] = useState<CommanderCommand | null>(null);
+  const [petRenderLimit, setPetRenderLimit] = useState<PetRenderLimit>(30);
   const [roomXmtpGroupId, setRoomXmtpGroupId] = useState<string | null>(null);
   const [xmtpStatus, setXmtpStatus] = useState<CityXmtpStatus>("idle");
   const [xmtpInboxId, setXmtpInboxId] = useState("");
@@ -422,6 +448,7 @@ export default function App() {
   );
   const xmtpGroupRef = useRef<Awaited<ReturnType<typeof loadOrCreateCityGroup>> | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const commanderCommandIdRef = useRef(0);
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
@@ -1154,13 +1181,21 @@ export default function App() {
     }
   }, [loadedPet, savedPets, selectedPet]);
 
+  const issueCommanderCommand = useCallback((command: Omit<CommanderCommand, "id">) => {
+    commanderCommandIdRef.current += 1;
+    setCommanderCommand({
+      id: commanderCommandIdRef.current,
+      ...command,
+    });
+  }, []);
+
   const isRestoringPet = saveStatus === "signing-in" || (!!user && !hasLoadedSavedPets);
   const currentPetPresenceKey = petPayload ? petPresenceKey(petPayload) : "";
   const renderableRoomPets = useMemo(
     () => roomPets.filter((roomPet) => roomPet.imageUrl),
     [roomPets],
   );
-  const otherRoomPets = useMemo(
+  const allOtherRoomPets = useMemo(
     () =>
       dedupeRoomPetsByAsset(
         renderableRoomPets.filter(
@@ -1170,18 +1205,26 @@ export default function App() {
       ),
     [currentPetPresenceKey, renderableRoomPets, user?.uid],
   );
+  const otherRoomPets = useMemo(
+    () => (petRenderLimit === "all" ? allOtherRoomPets : allOtherRoomPets.slice(0, petRenderLimit)),
+    [allOtherRoomPets, petRenderLimit],
+  );
   const dedupedResidentCount = useMemo(
     () => dedupeRoomPetsByAsset(renderableRoomPets).length,
     [renderableRoomPets],
   );
   const residentCount = Math.max(dedupedResidentCount, hasEnteredCity && petPayload ? 1 : 0);
   const canvasPet = petPayload;
-  const roomPetProgressTotal = Math.max(roomPetLoadProgress.total, otherRoomPets.length);
+  const limitedRoomPetCount = otherRoomPets.length;
+  const allOtherRoomPetCount = allOtherRoomPets.length;
+  const roomPetProgressTotal = Math.max(roomPetLoadProgress.total, limitedRoomPetCount);
   const roomPetProgressLoaded = Math.min(roomPetLoadProgress.loaded, roomPetProgressTotal);
   const roomPetStatusLabel = !hasLoadedRoomPets
     ? "Loading city pets..."
     : roomPetProgressTotal
-      ? `${roomPetProgressLoaded}/${roomPetProgressTotal} city pets loaded`
+      ? `${roomPetProgressLoaded}/${roomPetProgressTotal} city pets loaded${
+          allOtherRoomPetCount > limitedRoomPetCount ? ` · ${allOtherRoomPetCount} available` : ""
+        }`
       : "No city pets online yet";
   const savedPetStatusLabel = !user
     ? "Preparing session..."
@@ -1307,6 +1350,7 @@ export default function App() {
         pet={canvasPet}
         otherPets={otherRoomPets}
         chatBubbles={chatBubbles}
+        commanderCommand={commanderCommand}
         onPetReadyChange={handlePetReadyChange}
         onRoomPetLoadProgress={handleRoomPetLoadProgress}
         onPetClick={handlePetClick}
@@ -1460,6 +1504,57 @@ export default function App() {
           <p className="room-badge">
             {defaultRoomName} · {residentCount} resident{residentCount === 1 ? "" : "s"}
           </p>
+          <div className="state-control compact pet-limit-control">
+            <span>Load pets</span>
+            <div className="state-options pet-limit-options" aria-label="Load pets">
+              {petRenderLimitOptions.map((option) => (
+                <button
+                  key={option.value}
+                  className={petRenderLimit === option.value ? "selected" : ""}
+                  type="button"
+                  onClick={() => setPetRenderLimit(option.value)}
+                >
+                  {option.label}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className={`commander-panel${isCommanderMode ? " active" : ""}`}>
+            <button
+              className="commander-toggle"
+              type="button"
+              aria-pressed={isCommanderMode}
+              onClick={() => setIsCommanderMode((current) => !current)}
+            >
+              Commander
+            </button>
+            {isCommanderMode ? (
+              <>
+                <div className="commander-group" aria-label="Formation commands">
+                  {commanderFormationOptions.map((option) => (
+                    <button
+                      key={option.value}
+                      type="button"
+                      onClick={() => issueCommanderCommand({ formation: option.value })}
+                    >
+                      {option.label}
+                    </button>
+                  ))}
+                </div>
+                <div className="commander-group pose" aria-label="Pose commands">
+                  {commanderPoseOptions.map((option) => (
+                    <button
+                      key={option.value}
+                      type="button"
+                      onClick={() => issueCommanderCommand({ pose: option.value })}
+                    >
+                      {option.label}
+                    </button>
+                  ))}
+                </div>
+              </>
+            ) : null}
+          </div>
           <label>
             <span>Status</span>
             <input

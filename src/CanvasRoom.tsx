@@ -36,6 +36,12 @@ export type RoomPetLoadProgress = {
   loaded: number;
   total: number;
 };
+export type CommanderFormation = "rally" | "line" | "column";
+export type CommanderCommand = {
+  id: number;
+  formation?: CommanderFormation;
+  pose?: PetSpritesheetState;
+};
 
 type PlayerState = "idle" | "walk";
 type Viewport = {
@@ -119,7 +125,28 @@ function moveAlongPath(position: Point, path: Point[], speed: number, delta: num
   return flipX;
 }
 
-function spritesheetStateForPlayer(playerState: PlayerState, petState: PetAnimationState, flipX: boolean): PetSpritesheetState {
+function moveTowardPoint(position: Point, target: Point, speed: number, delta: number) {
+  const dx = target.x - position.x;
+  const dy = target.y - position.y;
+  const distance = Math.hypot(dx, dy);
+
+  if (distance < 2) {
+    position.x = target.x;
+    position.y = target.y;
+    return { isMoving: false, flipX: null };
+  }
+
+  const step = Math.min(distance, (speed * delta) / 1000);
+  position.x += (dx / distance) * step;
+  position.y += (dy / distance) * step;
+
+  return {
+    isMoving: step < distance,
+    flipX: Math.abs(dx) > 0.2 ? dx < 0 : null,
+  };
+}
+
+function spritesheetStateForPlayer(playerState: PlayerState, petState: PetSpritesheetState, flipX: boolean): PetSpritesheetState {
   if (playerState === "walk") {
     return flipX ? "running-left" : "running-right";
   }
@@ -154,6 +181,10 @@ function paddedViewRect(viewRect: IsoViewRect, padding: number) {
 
 function petLayoutKey(pet: CanvasPetPayload) {
   return pet.petId ?? pet.publicImageUrl ?? pet.imageUrl;
+}
+
+function petImageKey(pet: CanvasPetPayload) {
+  return [petLayoutKey(pet), pet.assetHash, pet.publicImageUrl ?? pet.imageUrl].filter(Boolean).join(":");
 }
 
 function hashString(value: string) {
@@ -215,6 +246,62 @@ function remotePetPosition(assets: PixelOfficeAssets, slotIndex: number, key: st
     x: assets.origin.x + (slot.col + driftCol + 0.5) * assets.tileSize + jitterX,
     y: assets.origin.y + (slot.row + driftRow + 0.5) * assets.tileSize + jitterY,
   });
+}
+
+function formationTile(
+  assets: PixelOfficeAssets,
+  formation: CommanderFormation,
+  index: number,
+  total: number,
+  rallyCenter?: Point,
+) {
+  const rallyTile = rallyCenter ? pointToPixelTile(assets, rallyCenter) : null;
+  const centerCol = formation === "rally" && rallyTile ? rallyTile.col : Math.floor(assets.layout.cols / 2);
+  const centerRow =
+    formation === "rally" && rallyTile ? rallyTile.row : Math.floor(assets.layout.rows * 0.64);
+  const tileGap = 2;
+
+  if (formation === "line") {
+    return {
+      col: centerCol - Math.floor(total / 2) * tileGap + index * tileGap,
+      row: centerRow,
+    };
+  }
+
+  if (formation === "column") {
+    return {
+      col: centerCol,
+      row: centerRow - Math.floor(total / 2) * tileGap + index * tileGap,
+    };
+  }
+
+  const columns = Math.max(2, Math.ceil(Math.sqrt(total)));
+  const row = Math.floor(index / columns);
+  const col = index % columns;
+
+  return {
+    col: centerCol - Math.floor(columns / 2) * tileGap + col * tileGap,
+    row: centerRow + row * tileGap,
+  };
+}
+
+function formationPoint(
+  assets: PixelOfficeAssets,
+  formation: CommanderFormation,
+  index: number,
+  total: number,
+  rallyCenter?: Point,
+) {
+  const tile = formationTile(assets, formation, index, total, rallyCenter);
+
+  return nearestWalkablePoint(
+    assets,
+    tileCenter(
+      assets,
+      clamp(tile.col, 0, assets.layout.cols - 1),
+      clamp(tile.row, 0, assets.layout.rows - 1),
+    ),
+  );
 }
 
 function roundRect(
@@ -369,6 +456,7 @@ export function CanvasRoom({
   pet,
   otherPets = [],
   chatBubbles = {},
+  commanderCommand,
   showDebug = false,
   onPetReadyChange,
   onRoomPetLoadProgress,
@@ -377,6 +465,7 @@ export function CanvasRoom({
   pet: CanvasPetPayload | null;
   otherPets?: CanvasPetPayload[];
   chatBubbles?: Record<string, string>;
+  commanderCommand?: CommanderCommand | null;
   showDebug?: boolean;
   onPetReadyChange?: (isReady: boolean) => void;
   onRoomPetLoadProgress?: (progress: RoomPetLoadProgress) => void;
@@ -387,8 +476,14 @@ export function CanvasRoom({
   const petRef = useRef(pet);
   const otherPetsRef = useRef(otherPets);
   const chatBubblesRef = useRef(chatBubbles);
+  const commanderCommandRef = useRef<CommanderCommand | null>(commanderCommand ?? null);
+  const lastCommanderCommandIdRef = useRef(0);
+  const commanderPoseRef = useRef<PetSpritesheetState | null>(null);
   const imageRef = useRef<HTMLImageElement | null>(null);
   const otherImagesRef = useRef<Map<string, HTMLImageElement>>(new Map());
+  const remotePositionsRef = useRef<Map<string, Point>>(new Map());
+  const remoteTargetsRef = useRef<Map<string, Point>>(new Map());
+  const remoteFlipRefs = useRef<Map<string, boolean>>(new Map());
   const positionRef = useRef<Point>({ x: 336, y: 560 });
   const pathRef = useRef<Point[]>([]);
   const flipRef = useRef(false);
@@ -432,7 +527,7 @@ export function CanvasRoom({
       }
 
       onRoomPetLoadProgress?.({
-        loaded: otherPets.filter((otherPet) => otherImagesRef.current.has(petLayoutKey(otherPet))).length,
+        loaded: otherPets.filter((otherPet) => otherImagesRef.current.has(petImageKey(otherPet))).length,
         total: otherPets.length,
       });
     };
@@ -440,7 +535,7 @@ export function CanvasRoom({
     reportProgress();
 
     for (const otherPet of otherPets) {
-      const key = petLayoutKey(otherPet);
+      const key = petImageKey(otherPet);
 
       if (otherImagesRef.current.has(key)) {
         continue;
@@ -464,6 +559,10 @@ export function CanvasRoom({
   useEffect(() => {
     chatBubblesRef.current = chatBubbles;
   }, [chatBubbles]);
+
+  useEffect(() => {
+    commanderCommandRef.current = commanderCommand ?? null;
+  }, [commanderCommand]);
 
   useEffect(() => {
     imageRef.current = null;
@@ -559,6 +658,48 @@ export function CanvasRoom({
       const currentPet = petRef.current;
       const currentOtherPets = otherPetsRef.current;
       const image = imageRef.current;
+      const sortedOtherPets = [...currentOtherPets].sort((left, right) =>
+        petLayoutKey(left).localeCompare(petLayoutKey(right)),
+      );
+      const command = commanderCommandRef.current;
+
+      if (command && command.id !== lastCommanderCommandIdRef.current) {
+        lastCommanderCommandIdRef.current = command.id;
+
+        if (command.pose) {
+          commanderPoseRef.current = command.pose;
+        }
+
+        if (command.formation) {
+          const formationRoster = [
+            ...(currentPet ? [{ key: `self:${petLayoutKey(currentPet)}`, isSelf: true as const }] : []),
+            ...sortedOtherPets.map((otherPet, index) => ({
+              key: petLayoutKey(otherPet),
+              isSelf: false as const,
+              fallbackPosition: remotePetPosition(assets, index, petLayoutKey(otherPet)),
+            })),
+          ];
+
+          formationRoster.forEach((member, index) => {
+            const target = formationPoint(
+              assets,
+              command.formation!,
+              index,
+              formationRoster.length,
+              positionRef.current,
+            );
+
+            if (member.isSelf) {
+              pathRef.current = findPixelPath(assets, positionRef.current, target);
+              return;
+            }
+
+            const currentPosition = remotePositionsRef.current.get(member.key) ?? member.fallbackPosition;
+            remotePositionsRef.current.set(member.key, { ...currentPosition });
+            remoteTargetsRef.current.set(member.key, target);
+          });
+        }
+      }
 
       const player =
         currentPet && image
@@ -574,31 +715,60 @@ export function CanvasRoom({
               state: playerStateRef.current,
               spritesheetState: spritesheetStateForPlayer(
                 playerStateRef.current,
-                currentPet.animationState,
+                commanderPoseRef.current ?? currentPet.animationState,
                 flipRef.current,
               ),
             }
           : null;
-      const sortedOtherPets = [...currentOtherPets].sort((left, right) =>
-        petLayoutKey(left).localeCompare(petLayoutKey(right)),
-      );
+      const activeRemoteKeys = new Set(sortedOtherPets.map((otherPet) => petLayoutKey(otherPet)));
+      for (const key of remotePositionsRef.current.keys()) {
+        if (!activeRemoteKeys.has(key)) {
+          remotePositionsRef.current.delete(key);
+          remoteTargetsRef.current.delete(key);
+          remoteFlipRefs.current.delete(key);
+        }
+      }
       const remotePlayers = sortedOtherPets
         .map((otherPet, index) => {
-          const key = petLayoutKey(otherPet);
-          const otherImage = otherImagesRef.current.get(key);
+          const layoutKey = petLayoutKey(otherPet);
+          const otherImage = otherImagesRef.current.get(petImageKey(otherPet));
 
           if (!otherImage) {
             return null;
           }
 
+          const fallbackPosition = remotePetPosition(assets, index, layoutKey);
+          const remotePosition = remotePositionsRef.current.get(layoutKey) ?? fallbackPosition;
+          const remoteTarget = remoteTargetsRef.current.get(layoutKey);
+          let remoteFlip = remoteFlipRefs.current.get(layoutKey) ?? index % 2 === 0;
+          let state: PlayerState = "idle";
+
+          if (remoteTarget) {
+            const { flipX, isMoving } = moveTowardPoint(remotePosition, remoteTarget, 210, delta);
+            if (flipX !== null) {
+              remoteFlip = flipX;
+              remoteFlipRefs.current.set(layoutKey, remoteFlip);
+            }
+            if (isMoving) {
+              state = "walk";
+            } else {
+              remoteTargetsRef.current.delete(layoutKey);
+            }
+          }
+
+          remotePositionsRef.current.set(layoutKey, remotePosition);
+
           return {
             image: otherImage,
             pet: otherPet,
-            position: remotePetPosition(assets, index, key),
-            frameIndex: Math.floor(time / 180 + index),
-            flipX: index % 2 === 0,
-            state: "idle" as const,
-            spritesheetState: otherPet.animationState,
+            position: remotePosition,
+            frameIndex: state === "walk" ? Math.floor(time / 95 + index) : Math.floor(time / 180 + index),
+            flipX: remoteFlip,
+            state,
+            spritesheetState:
+              state === "walk"
+                ? spritesheetStateForPlayer(state, commanderPoseRef.current ?? otherPet.animationState, remoteFlip)
+                : commanderPoseRef.current ?? otherPet.animationState,
           };
         })
         .filter((remotePlayer): remotePlayer is NonNullable<typeof remotePlayer> => Boolean(remotePlayer));
