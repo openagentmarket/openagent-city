@@ -65,6 +65,145 @@ textarea {
   cursor: pointer;
 }
 
+.github-star-overlay {
+  position: fixed;
+  right: 18px;
+  top: 18px;
+  z-index: 20;
+  width: min(420px, calc(100vw - 36px));
+  pointer-events: none;
+}
+
+.github-star-card {
+  position: relative;
+  width: 100%;
+  max-height: calc(100dvh - 36px);
+  overflow: auto;
+  border: 2px solid rgba(255, 248, 238, 0.68);
+  border-radius: 8px;
+  background: rgba(18, 20, 18, 0.86);
+  color: #fff8ee;
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.38);
+  backdrop-filter: blur(16px);
+  pointer-events: auto;
+}
+
+.github-star-close {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  z-index: 2;
+  display: inline-grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border: 1px solid rgba(255, 248, 238, 0.24);
+  border-radius: 8px;
+  background: rgba(18, 20, 18, 0.72);
+  color: #fff8ee;
+  font-size: 1rem;
+  font-weight: 950;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.github-star-hero {
+  display: block;
+  width: 100%;
+  height: 190px;
+  object-fit: cover;
+  object-position: center;
+}
+
+.github-star-body {
+  display: grid;
+  gap: 12px;
+  padding: 16px;
+}
+
+.github-star-eyebrow,
+.github-star-body h2,
+.github-star-body p {
+  margin: 0;
+}
+
+.github-star-eyebrow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: #ffd66b;
+  font-size: 0.72rem;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.github-star-eyebrow img {
+  display: inline-grid;
+  flex: 0 0 28px;
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  background: rgba(255, 248, 238, 0.1);
+  object-fit: contain;
+  padding: 2px;
+}
+
+.github-star-body h2 {
+  font-size: 1.35rem;
+  line-height: 1.05;
+}
+
+.github-star-body p {
+  color: rgba(255, 248, 238, 0.76);
+  font-size: 0.92rem;
+  line-height: 1.45;
+}
+
+.github-star-body strong {
+  color: #fff8ee;
+}
+
+.github-star-actions {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+}
+
+.github-star-primary,
+.github-star-secondary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 42px;
+  border-radius: 8px;
+  font-size: 0.9rem;
+  font-weight: 950;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.github-star-primary {
+  gap: 8px;
+  border: 0;
+  background: #fff8ee;
+  color: #191714;
+  padding: 0 14px;
+}
+
+.github-star-secondary {
+  border: 1px solid rgba(255, 248, 238, 0.24);
+  background: rgba(255, 248, 238, 0.08);
+  color: #fff8ee;
+  padding: 0 12px;
+}
+
+.github-star-primary:focus-visible,
+.github-star-secondary:focus-visible,
+.github-star-close:focus-visible {
+  outline: 3px solid #e6a73d;
+  outline-offset: 4px;
+}
+
 .onboarding-card {
   position: fixed;
   left: 22px;
@@ -786,6 +925,44 @@ textarea {
 }
 
 @media (max-width: 720px) {
+  .github-star-overlay {
+    left: 12px;
+    right: 12px;
+    top: 12px;
+    width: auto;
+  }
+
+  .github-star-card {
+    max-height: calc(100dvh - 84px);
+  }
+
+  .github-star-close {
+    width: 34px;
+    height: 34px;
+    font-size: 1rem;
+  }
+
+  .github-star-hero {
+    height: 160px;
+  }
+
+  .github-star-body {
+    padding: 14px;
+  }
+
+  .github-star-eyebrow {
+    font-size: 0.7rem;
+  }
+
+  .github-star-actions {
+    grid-template-columns: 1fr;
+  }
+
+  .github-star-primary,
+  .github-star-secondary {
+    min-height: 52px;
+  }
+
   .onboarding-card {
     left: 12px;
     top: 12px;

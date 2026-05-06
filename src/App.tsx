@@ -107,6 +107,7 @@ const petRenderLimitOptions: { value: PetRenderLimit; label: string }[] = [
 ];
 
 const onboardingStorageKey = "openagent-city:onboarding:v1";
+const githubStarPromptStorageKey = "openagent-city:github-star-prompt-dismissed:v1";
 const defaultRoomId = "codex-city";
 const defaultRoomName = "Codex City";
 const roomUpdateError = "Could not update Codex City. Check Firestore room rules.";
@@ -149,6 +150,14 @@ function readOnboardingState(): OnboardingState {
       animationState: defaultPetAnimationState,
       hasEnteredCity: false,
     };
+  }
+}
+
+function readGithubStarPromptDismissed() {
+  try {
+    return localStorage.getItem(githubStarPromptStorageKey) === "true";
+  } catch {
+    return false;
   }
 }
 
@@ -407,6 +416,7 @@ function PetStatePreview({
 
 export default function App() {
   const initialOnboarding = useMemo(() => readOnboardingState(), []);
+  const wasGithubStarPromptDismissed = useMemo(() => readGithubStarPromptDismissed(), []);
   const [user, setUser] = useState<User | null>(null);
   const [savedPets, setSavedPets] = useState<SavedPet[]>([]);
   const [loadedPet, setLoadedPet] = useState<LoadedPet | null>(null);
@@ -423,6 +433,9 @@ export default function App() {
   const [isPetReady, setIsPetReady] = useState(false);
   const [isNewPetOnboarding, setIsNewPetOnboarding] = useState(false);
   const [isGateCardDismissed, setIsGateCardDismissed] = useState(false);
+  const [isGithubStarPromptOpen, setIsGithubStarPromptOpen] = useState(
+    !wasGithubStarPromptDismissed,
+  );
   const [roomPets, setRoomPets] = useState<RoomParticipant[]>([]);
   const [hasLoadedRoomPets, setHasLoadedRoomPets] = useState(false);
   const [roomPetLoadProgress, setRoomPetLoadProgress] = useState<RoomPetLoadProgress>({
@@ -1189,6 +1202,11 @@ export default function App() {
     });
   }, []);
 
+  const dismissGithubStarPrompt = useCallback(() => {
+    setIsGithubStarPromptOpen(false);
+    localStorage.setItem(githubStarPromptStorageKey, "true");
+  }, []);
+
   const isRestoringPet = saveStatus === "signing-in" || (!!user && !hasLoadedSavedPets);
   const currentPetPresenceKey = petPayload ? petPresenceKey(petPayload) : "";
   const renderableRoomPets = useMemo(
@@ -1355,6 +1373,47 @@ export default function App() {
         onRoomPetLoadProgress={handleRoomPetLoadProgress}
         onPetClick={handlePetClick}
       />
+      {isGithubStarPromptOpen ? (
+        <section className="github-star-overlay" aria-label="Star OpenAgent City on GitHub">
+          <article className="github-star-card">
+            <button
+              className="github-star-close"
+              type="button"
+              aria-label="Close GitHub star prompt"
+              onClick={dismissGithubStarPrompt}
+            >
+              x
+            </button>
+            <img
+              className="github-star-hero"
+              src="/og-image.png"
+              alt="OpenAgent City filled with pixel pets"
+            />
+            <div className="github-star-body">
+              <p className="github-star-eyebrow">
+                <img src="/icons/icon-192.png" alt="" aria-hidden="true" />
+                Open Source · OpenAgent City
+              </p>
+              <h2>Star OpenAgent City</h2>
+              <p>Help more pet creators find the project and keep the city growing.</p>
+              <div className="github-star-actions">
+                <a
+                  className="github-star-primary"
+                  href="https://github.com/openagentmarket/openagent-city"
+                  target="_blank"
+                  rel="noreferrer"
+                  onClick={dismissGithubStarPrompt}
+                >
+                  Star on GitHub <span aria-hidden="true">-&gt;</span>
+                </a>
+                <button className="github-star-secondary" type="button" onClick={dismissGithubStarPrompt}>
+                  Later
+                </button>
+              </div>
+            </div>
+          </article>
+        </section>
+      ) : null}
       {selectedPet ? (
         <section className="pet-inspector" aria-label={`${selectedPet.name} states`}>
           <div className="pet-inspector-header">
